@@ -1,0 +1,157 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  CSUCI Student Success Navigator — Serverless backend.
+  Deploys API Gateway, Lambda orchestrator, and SNS escalation topic
+  for the AI-powered student advising chatbot. All interactions are
+  logged to CloudWatch for observability.
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+    Description: Deployment environment (dev or prod).
+
+  BedrockKBId:
+    Type: String
+    Description: >
+      The ID of the Amazon Bedrock Knowledge Base that contains
+      CSUCI catalog and policy documents.
+    MinLength: 1
+
+  ModelId:
+    Type: String
+    Default: anthropic.claude-3-5-sonnet-20241022-v2:0
+    Description: >
+      The Bedrock foundation model identifier used for response
+      generation (Claude 3.5 Sonnet v2 by default).
+
+# ---------------------------------------------------------------------------
+# Global settings
+# ---------------------------------------------------------------------------
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 30
+    MemorySize: 512
+    Architectures:
+      - x86_64
+    Tags:
+      Project: StudentSuccessNavigator
+      Environment: !Ref Environment
+
+  Api:
+    # Implicit ServerlessRestApi CORS configuration
+    Cors:
+      AllowOrigin: "'*'"
+      AllowHeaders: "'Content-Type,Authorization'"
+      AllowMethods: "'POST,OPTIONS'"
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+
+  # -------------------------------------------------------------------------
+  # SNS — Human-escalation notifications
+  # -------------------------------------------------------------------------
+  EscalationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: Student Navigator Escalation
+      TopicName: !Sub student-navigator-escalation-${Environment}
+      Tags:
+        - Key: Project
+          Value: StudentSuccessNavigator
+        - Key: Environment
+          Value: !Ref Environment
+
+  # -------------------------------------------------------------------------
+  # Lambda — Orchestrator function
+  # -------------------------------------------------------------------------
+  OrchestratorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub student-navigator-orchestrator-${Environment}
+      Description: >
+        Main orchestrator for the Student Success Navigator chatbot.
+        Receives user messages, runs safety checks, retrieves context
+        from the Bedrock Knowledge Base, generates a response via Claude,
+        and logs all interactions to CloudWatch.
+      Handler: orchestrator.handler.lambda_handler
+      CodeUri: ../lambda/
+      Environment:
+        Variables:
+          BEDROCK_KB_ID: !Ref BedrockKBId
+          MODEL_ID: !Ref ModelId
+          SNS_TOPIC_ARN: !Ref EscalationTopic
+          ENVIRONMENT: !Ref Environment
+      Policies:
+        # --- Bedrock InvokeModel ---
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
+              Resource: !Sub arn:aws:bedrock:${AWS::Region}::foundation-model/${ModelId}
+        # --- Bedrock Retrieve (Knowledge Base) ---
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:Retrieve
+              Resource: !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:knowledge-base/${BedrockKBId}
+        # --- SNS Publish ---
+        - SNSPublishMessagePolicy:
+            TopicArn: !Ref EscalationTopic
+      Events:
+        ChatApi:
+          Type: Api
+          Properties:
+            Path: /chat
+            Method: POST
+            RestApiId: !Ref ServerlessRestApi
+      Tags:
+        Project: StudentSuccessNavigator
+        Environment: !Ref Environment
+
+  # -------------------------------------------------------------------------
+  # API Gateway — Explicit definition for CORS + stage control
+  # -------------------------------------------------------------------------
+  ServerlessRestApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub student-navigator-api-${Environment}
+      StageName: prod
+      Cors:
+        AllowOrigin: "'*'"
+        AllowHeaders: "'Content-Type,Authorization'"
+        AllowMethods: "'POST,OPTIONS'"
+      Tags:
+        Project: StudentSuccessNavigator
+        Environment: !Ref Environment
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+  ApiEndpointUrl:
+    Description: URL of the /chat API endpoint.
+    Value: !Sub https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/prod/chat
+
+  OrchestratorFunctionArn:
+    Description: ARN of the Orchestrator Lambda function.
+    Value: !GetAtt OrchestratorFunction.Arn
+
+  EscalationTopicArn:
+    Description: ARN of the SNS escalation topic.
+    Value: !Ref EscalationTopic
+
+  CloudWatchLogGroup:
+    Description: CloudWatch Log Group for reviewing chatbot interactions.
+    Value: !Sub /aws/lambda/student-navigator-orchestrator-${Environment}

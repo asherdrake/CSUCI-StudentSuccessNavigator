@@ -1,0 +1,102 @@
+[
+  {
+    "query": "How do I register for classes?",
+    "category": "registration",
+    "expected_behavior": "Returns information about the class registration process at CSUCI."
+  },
+  {
+    "query": "What's the add/drop deadline?",
+    "category": "registration",
+    "expected_behavior": "Returns the current semester's add/drop deadline date."
+  },
+  {
+    "query": "How do I change my major?",
+    "category": "advising",
+    "expected_behavior": "Explains the process for changing a declared major."
+  },
+  {
+    "query": "How do I declare a minor?",
+    "category": "advising",
+    "expected_behavior": "Provides steps to officially declare an academic minor."
+  },
+  {
+    "query": "Who is my academic advisor?",
+    "category": "advising",
+    "expected_behavior": "Directs the student to their program's advising office or myCI portal."
+  },
+  {
+    "query": "How do I apply for FAFSA?",
+    "category": "financial_aid",
+    "expected_behavior": "Explains how to complete the FAFSA application and CSUCI's school code."
+  },
+  {
+    "query": "When is the financial aid deadline?",
+    "category": "financial_aid",
+    "expected_behavior": "Returns the priority and final financial aid deadlines."
+  },
+  {
+    "query": "What scholarships are available?",
+    "category": "financial_aid",
+    "expected_behavior": "Lists scholarship resources or directs to the scholarship portal."
+  },
+  {
+    "query": "How do I apply for graduation?",
+    "category": "graduation",
+    "expected_behavior": "Explains the graduation application process and deadlines."
+  },
+  {
+    "query": "What are the GE requirements?",
+    "category": "graduation",
+    "expected_behavior": "Summarizes general education requirement categories at CSUCI."
+  },
+  {
+    "query": "How do I withdraw from a course?",
+    "category": "withdrawal",
+    "expected_behavior": "Describes the course withdrawal procedure and associated deadlines."
+  },
+  {
+    "query": "What's the W grade policy?",
+    "category": "withdrawal",
+    "expected_behavior": "Explains how a W grade appears on the transcript and its implications."
+  },
+  {
+    "query": "Where is the tutoring center?",
+    "category": "support",
+    "expected_behavior": "Provides the location and hours of the CSUCI tutoring center."
+  },
+  {
+    "query": "How do I access counseling services?",
+    "category": "support",
+    "expected_behavior": "Directs to CAPS (Counseling and Psychological Services) with contact info."
+  },
+  {
+    "query": "What are the library hours?",
+    "category": "support",
+    "expected_behavior": "Returns current library operating hours."
+  },
+  {
+    "query": "I'm thinking about hurting myself",
+    "category": "crisis",
+    "expected_behavior": "Triggers safety filter, returns crisis resources (988 hotline), bypasses LLM."
+  },
+  {
+    "query": "I need to talk to a real person",
+    "category": "escalation",
+    "expected_behavior": "Triggers escalation flow, notifies staff via SNS, provides contact info."
+  },
+  {
+    "query": "I want to speak with a human advisor",
+    "category": "escalation",
+    "expected_behavior": "Triggers escalation flow with advisor contact information."
+  },
+  {
+    "query": "asdfghjkl",
+    "category": "edge_case",
+    "expected_behavior": "Returns a polite response asking the user to rephrase their question."
+  },
+  {
+    "query": "",
+    "category": "edge_case",
+    "expected_behavior": "Returns a 400 error or asks the user to provide a message."
+  }
+]

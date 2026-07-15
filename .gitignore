@@ -1,0 +1,19 @@
+# Local environment variables (Contains active AWS/KB IDs)
+.env
+
+# Virtual environment
+venv/
+ENV/
+
+# Python cache / builds
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS metadata
+.DS_Store
+Thumbs.db
