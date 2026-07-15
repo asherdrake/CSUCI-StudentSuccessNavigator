@@ -2,7 +2,7 @@
 
 An AI-powered assistant designed to help California State University Channel Islands (CSUCI) students, families, and prospective students find accurate campus answers regarding registration, advising, financial aid, tutoring, and campus locations.
 
-The project features a **React Vite frontend** integrated alongside a serverless **Python AWS backend** (Amazon Bedrock RAG, Llama 3 70B, and DynamoDB).
+The project features a **React Vite frontend** integrated alongside a serverless **Python AWS backend** (Amazon Bedrock RAG and Llama 3 70B).
 
 ---
 
@@ -22,7 +22,6 @@ flowchart TD
     Clarify -->|Turn 2| EscCard[Interactive Ticket Choice UI]
     Floor -->|Yes| Claude[Llama 3 70B via Bedrock Converse]
     Claude -->|grounded answer| Lambda
-    Lambda --> DDB[(DynamoDB Sessions)]
     Lambda -->|response payload| Student
 ```
 
@@ -36,7 +35,6 @@ flowchart TD
 | **RAG Translation** | Pre-processes foreign language questions (e.g. Spanish) by translating them to English before querying the vector base, ensuring maximum match quality. |
 | **Bedrock Knowledge Base** | Vector storage database containing scraped CSUCI websites, roadmaps, and catalogs. |
 | **Llama 3 70B Model** | Generates encouragement-toned, counselor-style responses and automatically matches the input language. |
-| **DynamoDB** | Tracks multi-turn conversation sessions (TTL-enabled). |
 
 ---
 
