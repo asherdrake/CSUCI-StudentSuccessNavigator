@@ -133,29 +133,55 @@ function App() {
 
   const parseMarkdownLinks = (text) => {
     if (!text) return '';
+    
+    // Programmatically strip bolding (**) and heading (#) markdown syntax
+    let cleanText = text.replace(/\*\*/g, '');
+    cleanText = cleanText.replace(/#+\s+/g, '');
+    
     const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
     const parts = [];
     let lastIndex = 0;
     let match;
 
-    while ((match = linkRegex.exec(text)) !== null) {
+    while ((match = linkRegex.exec(cleanText)) !== null) {
       if (match.index > lastIndex) {
-        parts.push(text.substring(lastIndex, match.index));
+        parts.push(cleanText.substring(lastIndex, match.index));
       }
       const title = match[1];
       const url = match[2];
       parts.push(
-        <a key={match.index} href={url} target="_blank" rel="noopener noreferrer" style={{ color: '#C51B29', textDecoration: 'underline', fontWeight: '600' }}>
+        <a key={match.index} href={url} target="_blank" rel="noopener noreferrer" style={{ color: '#C51B29', textDecoration: 'underline' }}>
           {title}
         </a>
       );
       lastIndex = linkRegex.lastIndex;
     }
 
-    if (lastIndex < text.length) {
-      parts.push(text.substring(lastIndex));
+    if (lastIndex < cleanText.length) {
+      parts.push(cleanText.substring(lastIndex));
     }
-    return parts.length > 0 ? parts : text;
+    return parts.length > 0 ? parts : cleanText;
+  };
+
+  const handleCreateTicket = (msgId) => {
+    const ticketId = `CSUCI-${Math.floor(100000 + Math.random() * 900000)}`;
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === msgId
+          ? { ...msg, ticketStatus: 'created', ticketId }
+          : msg
+      )
+    );
+  };
+
+  const handleDismissTicket = (msgId) => {
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === msgId
+          ? { ...msg, ticketStatus: 'dismissed' }
+          : msg
+      )
+    );
   };
 
   // --- API Submission ---
@@ -328,17 +354,6 @@ function App() {
                       <div>{parseMarkdownLinks(msg.content)}</div>
                     )}
 
-                    {/* Source Citations */}
-                    {msg.citations && msg.citations.length > 0 && (
-                      <div className="citations-wrapper">
-                        {msg.citations.map((cite, index) => (
-                          <a key={index} href={cite.url} target="_blank" rel="noopener noreferrer" className="citation-btn">
-                            🔗 {cite.title}
-                          </a>
-                        ))}
-                      </div>
-                    )}
-
                     {/* Escalation Card */}
                     {msg.escalation && (
                       <div className="escalation-alert-box">
@@ -348,8 +363,8 @@ function App() {
                             {msg.escalation.reason}
                           </p>
                         )}
-                        <p>We are transferring your question to the appropriate campus office:</p>
-                        <div className="escalation-details">
+                        <p>We suggest reaching out to the specialized campus office for this question:</p>
+                        <div className="escalation-details" style={{ marginBottom: '16px' }}>
                           <strong>Office:</strong> {msg.escalation.office}<br />
                           {msg.escalation.contact.location && (
                             <>
@@ -363,12 +378,44 @@ function App() {
                             </>
                           )}
                           <strong>Phone:</strong> {msg.escalation.contact.phone}<br />
-                          <strong>Direct Link:</strong> <a href={msg.escalation.contact.url} target="_blank" rel="noopener noreferrer">Visit Website</a>
+                          <strong>Direct Link:</strong> <a href={msg.escalation.contact.url} target="_blank" rel="noopener noreferrer" style={{ color: '#C51B29', fontWeight: 'bold' }}>Visit Website</a>
                         </div>
-                        {msg.escalation.ticket_draft && (
-                          <div className="ticket-draft-log">
-                            <strong>Draft Support Ticket:</strong>
-                            <div className="ticket-draft-log-box">{msg.escalation.ticket_draft.summary}</div>
+
+                        {/* Interactive Ticket Flow */}
+                        {!msg.ticketStatus ? (
+                          <div style={{ background: '#f8f9fa', border: '1px solid #e9ecef', borderRadius: '6px', padding: '12px', marginTop: '12px' }}>
+                            <p style={{ fontSize: '13px', fontWeight: '600', color: '#333', margin: '0 0 10px 0' }}>
+                              Would you like to generate an official support ticket for this request?
+                            </p>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              <button 
+                                onClick={() => handleCreateTicket(msg.id)} 
+                                style={{ background: '#C51B29', color: '#fff', border: 'none', borderRadius: '4px', padding: '6px 12px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}
+                              >
+                                Yes, Generate Ticket
+                              </button>
+                              <button 
+                                onClick={() => handleDismissTicket(msg.id)} 
+                                style={{ background: 'transparent', color: '#666', border: '1px solid #ccc', borderRadius: '4px', padding: '6px 12px', fontSize: '12px', cursor: 'pointer' }}
+                              >
+                                No, Thanks
+                              </button>
+                            </div>
+                          </div>
+                        ) : msg.ticketStatus === 'created' ? (
+                          <div style={{ background: '#d1e7dd', border: '1px solid #badbcc', borderRadius: '6px', padding: '12px', marginTop: '12px', color: '#0f5132' }}>
+                            <div style={{ fontWeight: 'bold', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                              ✅ Support Ticket Generated Successfully
+                            </div>
+                            <div style={{ fontSize: '13px' }}>
+                              <strong>Ticket ID:</strong> #{msg.ticketId}<br />
+                              <strong>Department:</strong> {msg.escalation.office}<br />
+                              <strong>Summary:</strong> {msg.escalation.ticket_draft?.summary || "Academic Inquiry"}
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ background: '#f8f9fa', border: '1px solid #e9ecef', borderRadius: '6px', padding: '12px', marginTop: '12px', color: '#666', fontSize: '12px', fontStyle: 'italic' }}>
+                            Ticket generation skipped. You can reach the office directly using the contact details above.
                           </div>
                         )}
                       </div>
