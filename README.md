@@ -38,6 +38,18 @@ flowchart TD
 
 ---
 
+## Key Features
+
+*   **Interactive Ticket Generation**: If the bot is unable to answer a query after a clarification turn, it displays direct contact details for the specialized office and offers buttons to generate an official support ticket. Accepting generates a unique tracking ID (`#CSUCI-XXXXXX`) and a counselor-assigned summary badge.
+*   **Cross-Lingual RAG Translation**: Resolves low match scores on foreign queries (e.g. Spanish) by pre-translating the search query to English. It retrieves matching English documents and passes them to Llama 3, which translates the facts back to reply fully in the student's language.
+*   **Context & Token Safeguards**:
+    *   *Sliding History Window*: Prunes history to the last 10 turns (5 user-bot exchanges) to stay safely within Llama's 8,192 token limit.
+    *   *Passage Clipping*: Truncates retrieved text blocks to `2,500` characters to filter out web scraper headers and footers.
+    *   *Minimal Retrieval footprint*: Retrieves `top_k=3` passages for lightweight queries.
+*   **Raised Score Floor Guardrail**: Employs a strict `0.40` score threshold to immediately route out-of-scope or irrelevant queries into the double-turn clarification loop.
+
+---
+
 ## Local Development Setup
 
 To run the Student Success Navigator application locally, you will run the backend Python server and the React frontend concurrently.
