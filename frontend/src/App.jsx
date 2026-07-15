@@ -322,7 +322,7 @@ function App() {
                   <div className="chat-text-bubble">
                     {!msg.answered && msg.role === 'bot' ? (
                       <span style={{ color: 'var(--csuci-muted)', fontStyle: 'italic' }}>
-                        Bypassing AI response. Routing request...
+                        User response can't be processed. Routing request...
                       </span>
                     ) : (
                       <div>{parseMarkdownLinks(msg.content)}</div>
@@ -346,6 +346,17 @@ function App() {
                         <p>We are transferring your question to the appropriate campus office:</p>
                         <div className="escalation-details">
                           <strong>Office:</strong> {msg.escalation.office}<br />
+                          {msg.escalation.contact.location && (
+                            <>
+                              <strong>Location:</strong> {msg.escalation.contact.location}{' '}
+                              {msg.escalation.contact.map_url && (
+                                <a href={msg.escalation.contact.map_url} target="_blank" rel="noopener noreferrer" style={{ color: '#C51B29', textDecoration: 'underline', marginLeft: '4px' }}>
+                                  (Google Maps)
+                                </a>
+                              )}
+                              <br />
+                            </>
+                          )}
                           <strong>Phone:</strong> {msg.escalation.contact.phone}<br />
                           <strong>Direct Link:</strong> <a href={msg.escalation.contact.url} target="_blank" rel="noopener noreferrer">Visit Website</a>
                         </div>
