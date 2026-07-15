@@ -1,126 +1,101 @@
 # CSUCI Student Success Navigator
 
-An AI-powered chatbot that helps California State University Channel Islands (CSUCI) students get instant, accurate answers to questions about registration, advising, financial aid, graduation, and campus support services.
+An AI-powered assistant designed to help California State University Channel Islands (CSUCI) students, families, and prospective students find accurate campus answers regarding registration, advising, financial aid, tutoring, and campus locations.
 
-Built on **Amazon Bedrock** (Claude 3.5 Sonnet + Knowledge Bases) with a fully serverless AWS backend and a React frontend.
+The project features a **React Vite frontend** integrated alongside a serverless **Python AWS backend** (Amazon Bedrock RAG, Llama 3 70B, and DynamoDB).
 
 ---
 
-## Architecture
+## System Architecture
 
 ```mermaid
-flowchart LR
-    Student([Student]) -->|message| APIGW[API Gateway]
+flowchart TD
+    Student([Student React UI]) -->|1. message & history| APIGW[API Gateway / Local Dev Server]
     APIGW --> Lambda[Lambda Orchestrator]
-    Lambda --> Safety[Safety Filter]
-    Safety -->|crisis| SNS[SNS Escalation]
-    Safety -->|safe| KB[Bedrock Knowledge Base]
-    KB --> Claude[Claude 3.5 Sonnet]
-    Claude --> Lambda
+    Lambda --> Safety[safety_filter.py]
+    Safety -->|crisis| Helpline[Immediate Crisis Handoff]
+    Safety -->|safe| Translate[llm.py: query translation]
+    Translate -->|English search query| KB[Bedrock Knowledge Base]
+    KB -->|RAG passages| Floor{Score Floor >= 0.40}
+    Floor -->|No / Low score| Clarify[Double-turn Clarification Loop]
+    Clarify -->|Turn 1| RephraseMsg[Clarification Request]
+    Clarify -->|Turn 2| EscCard[Interactive Ticket Choice UI]
+    Floor -->|Yes| Claude[Llama 3 70B via Bedrock Converse]
+    Claude -->|grounded answer| Lambda
     Lambda --> DDB[(DynamoDB Sessions)]
-    Lambda -->|response| APIGW
-    APIGW -->|answer| Student
+    Lambda -->|response payload| Student
 ```
 
 ### Component Summary
 
 | Component | Purpose |
 |---|---|
-| **API Gateway** | HTTPS endpoint with CORS; routes `POST /chat` to Lambda |
-| **Lambda Orchestrator** | Coordinates safety check → retrieval → LLM → session save |
-| **Safety Filter** | Detects crisis language and escalation requests |
-| **Bedrock Knowledge Base** | RAG retrieval over CSUCI catalog & policy PDFs |
-| **Claude 3.5 Sonnet** | Generates grounded, student-friendly answers |
-| **DynamoDB** | Stores multi-turn conversation sessions (TTL-enabled) |
-| **SNS** | Sends email/SMS alerts when a student needs human help |
+| **React Frontend** | Modern, responsive student chat interface with interactive support ticket generation options. |
+| **Lambda Orchestrator** | Coordinates safety filter → query translation → RAG retrieval → history pruning → LLM answer generation. |
+| **Safety Filter** | Scans messages for crisis language and handles direct human handoff requests. |
+| **RAG Translation** | Pre-processes foreign language questions (e.g. Spanish) by translating them to English before querying the vector base, ensuring maximum match quality. |
+| **Bedrock Knowledge Base** | Vector storage database containing scraped CSUCI websites, roadmaps, and catalogs. |
+| **Llama 3 70B Model** | Generates encouragement-toned, counselor-style responses and automatically matches the input language. |
+| **DynamoDB** | Tracks multi-turn conversation sessions (TTL-enabled). |
 
 ---
 
-## Prerequisites
+## Local Development Setup
 
-| Tool | Version |
-|---|---|
-| AWS Account | With Amazon Bedrock model access enabled |
-| AWS SAM CLI | ≥ 1.100 |
-| Python | 3.12 |
-| Node.js | ≥ 18 (for the React frontend) |
-| Docker | Optional, for `sam build --use-container` |
+To run the Student Success Navigator application locally, you will run the backend Python server and the React frontend concurrently.
+
+### 1. Configure the Environment
+Create a `.env` file in the root of the project and paste your AWS credentials and configuration:
+```env
+# Bedrock Knowledge Base ID
+BEDROCK_KB_ID=XEAFKVXLTI
+
+# Bedrock model identifier
+MODEL_ID=meta.llama3-70b-instruct-v1:0
+
+# AWS credentials (for local developer access)
+AWS_REGION=us-west-2
+AWS_ACCESS_KEY_ID=ASIA...
+AWS_SECRET_ACCESS_KEY=...
+AWS_SESSION_TOKEN=IQoJb3Jp...
+```
+> **Security Note:** Never commit your `.env` file to git. It is automatically blocked by `.gitignore`.
+
+### 2. Start the Backend Dev Server
+Open a terminal in the project root folder:
+```bash
+# Activate your python virtual environment
+source venv/bin/activate
+
+# Start the local API server (runs on http://localhost:8000)
+python scratch/dev_server.py
+```
+
+### 3. Start the Frontend Dev Server
+Open a **new terminal window** in the project root folder:
+```bash
+# Navigate to the frontend directory
+cd frontend
+
+# Install npm dependencies (if not done already)
+npm install
+
+# Start the Vite React server (runs on http://localhost:5173)
+npm run dev
+```
+Open your browser to [http://localhost:5173](http://localhost:5173) to interact with the bot!
 
 ---
 
-## Setup
+## Run Unit Tests
 
-### 1. Clone the repository
+The backend includes a comprehensive test suite of 44 assertions covering safety keywords, double-turn failure loops, pre-processing, and router scoring.
 
+To run the tests locally:
 ```bash
-git clone <repo-url>
-cd "CSUCI Student Success Navigation"
-```
-
-### 2. Configure environment
-
-```bash
-cp .env.example .env
-# Edit .env and fill in:
-#   BEDROCK_KB_ID  — your Knowledge Base ID
-#   AWS_REGION     — e.g. us-west-2
-```
-
-### 3. Deploy the backend
-
-```bash
-cd infra
-sam build
-sam deploy --guided
-# Follow the prompts — provide your BedrockKBId when asked.
-```
-
-> **Tip:** After the first guided deploy the settings are saved in `samconfig.toml`. Future deploys only need `sam deploy`.
-
-### 4. Note the outputs
-
-After deployment, SAM prints:
-
-```
-Outputs:
-  ApiEndpointUrl   = https://xxxxxxxxxx.execute-api.us-west-2.amazonaws.com/prod/chat
-  SessionTableName = student-navigator-sessions-dev
-  OrchestratorFunctionArn = arn:aws:lambda:...
-```
-
-Use the `ApiEndpointUrl` in your frontend `.env` file.
-
-### 5. Run the tests
-
-```bash
-pip install -r requirements-dev.txt   # pytest, moto, boto3, etc.
+source venv/bin/activate
 pytest tests/ -v
 ```
-
----
-
-## API Reference (Quick)
-
-### `POST /chat`
-
-**Request:**
-```json
-{
-  "message": "How do I register for classes?",
-  "sessionId": "optional-uuid"
-}
-```
-
-**Response (200):**
-```json
-{
-  "answer": "You can register via the myCI portal...",
-  "sources": ["catalog.pdf"],
-  "sessionId": "uuid-of-session"
-}
-```
-
-For the full schema, error codes, and curl examples see **[docs/api_reference.md](docs/api_reference.md)**.
 
 ---
 
@@ -130,25 +105,24 @@ For the full schema, error codes, and curl examples see **[docs/api_reference.md
 CSUCI Student Success Navigation/
 ├── README.md                  ← you are here
 ├── .env.example
-├── infra/
-│   ├── template.yaml          ← AWS SAM / CloudFormation template
-│   └── samconfig.toml         ← SAM CLI deployment defaults
+├── requirements.txt           ← Backend dependencies
 ├── lambda/
-│   ├── orchestrator/
-│   │   └── handler.py         ← Lambda entry point
-│   ├── safety_filter.py       ← crisis & escalation detection
-│   ├── session.py             ← DynamoDB session management
-│   ├── retriever.py           ← Bedrock Knowledge Base retrieval
-│   └── llm.py                 ← Claude response generation
+│   └── orchestrator/
+│       ├── handler.py         ← Lambda Orchestrator entry pipeline
+│       ├── safety_filter.py   ← Crisis and escalation regex filter
+│       ├── retriever.py       ← Bedrock Knowledge Base retrieval client
+│       ├── llm.py             ← Converse API caller, translation, & history pruning
+│       ├── router.py          ← Keyword-matching department routing & ticket draft
+│       └── prompts.py         ← Counselor prompts and constraints
 ├── tests/
-│   ├── conftest.py            ← shared fixtures
-│   ├── test_safety_filter.py
-│   ├── test_session.py
-│   ├── test_retriever.py
 │   ├── test_handler.py
-│   └── fixtures/
-│       └── sample_queries.json
-├── frontend/                  ← React app (separate README)
+│   ├── test_retriever.py
+│   └── test_safety_filter.py
+├── frontend/                  ← Vite React frontend application
+│   ├── src/
+│   │   ├── App.jsx            ← Interactive UI and ticket choice cards
+│   │   └── index.css          ← Premium layout CSS
+│   └── package.json
 └── docs/
     ├── api_reference.md
     └── architecture.md
@@ -156,21 +130,6 @@ CSUCI Student Success Navigation/
 
 ---
 
-## Contributing
+## Team & License
 
-1. Create a feature branch from `main`.
-2. Write tests for new behaviour.
-3. Ensure `pytest tests/ -v` passes.
-4. Open a pull request.
-
----
-
-## Team
-
-> _Add team member names and roles here._
-
----
-
-## License
-
-This project is developed for CSUCI coursework. See `LICENSE` for details.
+*   **License**: Developed for CSUCI coursework. See `LICENSE` for details.
