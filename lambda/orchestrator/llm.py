@@ -9,7 +9,7 @@ management.
 Environment variables
 ---------------------
 - ``MODEL_ID`` — Bedrock model identifier.  Defaults to
-  ``anthropic.claude-3-5-sonnet-20241022-v2:0``.
+  ``meta.llama3-70b-instruct-v1:0``.
 """
 
 import logging
@@ -22,7 +22,7 @@ logger.setLevel(logging.INFO)
 
 _MODEL_ID: str = os.environ.get(
     "MODEL_ID",
-    "anthropic.claude-3-5-sonnet-20241022-v2:0",
+    "meta.llama3-70b-instruct-v1:0",
 )
 
 # Lazy-initialised client
