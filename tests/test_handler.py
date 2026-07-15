@@ -171,7 +171,7 @@ class TestHallucinationGuardrails:
     @patch("handler.invoke_model")
     @patch("handler.retrieve_context")
     @patch("handler.check_message")
-    def test_low_score_skips_llm_and_escalates(
+    def test_low_score_skips_llm_and_clarifies_on_first_turn(
         self, mock_check, mock_retrieve, mock_invoke
     ):
         mock_check.return_value = {
@@ -180,7 +180,6 @@ class TestHallucinationGuardrails:
             "crisis_response": None,
             "escalation": {"needed": False, "category": None},
         }
-        # Low retrieval score (0.25 < floor of 0.35)
         mock_retrieve.return_value = [
             {
                 "text": "Irrelevant info",
@@ -190,7 +189,49 @@ class TestHallucinationGuardrails:
             }
         ]
 
-        event = _apigw_event({"message": "What is the capital of France?"})
+        # First turn (empty history) -> should prompt for clarification, not escalate yet
+        event = _apigw_event({"message": "What is the capital of France?", "history": []})
+        from handler import lambda_handler
+
+        response = lambda_handler(event, {})
+        parsed = _parse_response(response)
+
+        assert parsed["status"] == 200
+        assert parsed["body"]["answered"] is True
+        assert "rephrase or provide a bit more details" in parsed["body"]["answer"]
+        assert parsed["body"]["escalation"] is None
+        mock_invoke.assert_not_called()
+
+    @patch("handler.invoke_model")
+    @patch("handler.retrieve_context")
+    @patch("handler.check_message")
+    def test_low_score_escalates_on_second_turn(
+        self, mock_check, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = {
+            "safe": True,
+            "crisis": False,
+            "crisis_response": None,
+            "escalation": {"needed": False, "category": None},
+        }
+        mock_retrieve.return_value = [
+            {
+                "text": "Irrelevant info",
+                "source_url": "https://csuci.edu/irrelevant",
+                "source_title": "Irrelevant Page",
+                "score": 0.25,
+            }
+        ]
+        from handler import CLARIFICATION_TEXT
+
+        # Second turn (history contains the clarification prompt) -> should escalate
+        event = _apigw_event({
+            "message": "What is the capital of France?",
+            "history": [
+                {"role": "user", "content": "What is the capital of France?"},
+                {"role": "assistant", "content": CLARIFICATION_TEXT}
+            ]
+        })
         from handler import lambda_handler
 
         response = lambda_handler(event, {})
@@ -201,13 +242,12 @@ class TestHallucinationGuardrails:
         assert parsed["body"]["answer"] is None
         assert parsed["body"]["escalation"]["trigger"] == "no_answer"
         assert parsed["body"]["escalation"]["office"] == "Academic Advising"
-        # LLM should not have been called
         mock_invoke.assert_not_called()
 
     @patch("handler.invoke_model")
     @patch("handler.retrieve_context")
     @patch("handler.check_message")
-    def test_no_answer_sentinel_escalates(
+    def test_no_answer_sentinel_clarifies_on_first_turn(
         self, mock_check, mock_retrieve, mock_invoke
     ):
         mock_check.return_value = {
@@ -216,7 +256,6 @@ class TestHallucinationGuardrails:
             "crisis_response": None,
             "escalation": {"needed": False, "category": None},
         }
-        # High retrieval score but LLM can't find direct answer
         mock_retrieve.return_value = [
             {
                 "text": "Some general registration rules.",
@@ -225,10 +264,51 @@ class TestHallucinationGuardrails:
                 "score": 0.85,
             }
         ]
-        # LLM returns exact NO_ANSWER sentinel
         mock_invoke.return_value = "NO_ANSWER"
 
-        event = _apigw_event({"message": "How do I override physics prerequisites?"})
+        # First turn (empty history) -> should clarify
+        event = _apigw_event({"message": "How do I override physics prerequisites?", "history": []})
+        from handler import lambda_handler
+
+        response = lambda_handler(event, {})
+        parsed = _parse_response(response)
+
+        assert parsed["status"] == 200
+        assert parsed["body"]["answered"] is True
+        assert "rephrase or provide a bit more details" in parsed["body"]["answer"]
+        assert parsed["body"]["escalation"] is None
+
+    @patch("handler.invoke_model")
+    @patch("handler.retrieve_context")
+    @patch("handler.check_message")
+    def test_no_answer_sentinel_escalates_on_second_turn(
+        self, mock_check, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = {
+            "safe": True,
+            "crisis": False,
+            "crisis_response": None,
+            "escalation": {"needed": False, "category": None},
+        }
+        mock_retrieve.return_value = [
+            {
+                "text": "Some general registration rules.",
+                "source_url": "https://csuci.edu/reg",
+                "source_title": "Rules",
+                "score": 0.85,
+            }
+        ]
+        mock_invoke.return_value = "NO_ANSWER"
+        from handler import CLARIFICATION_TEXT
+
+        # Second turn (history contains the clarification prompt) -> should escalate
+        event = _apigw_event({
+            "message": "How do I override physics prerequisites?",
+            "history": [
+                {"role": "user", "content": "How do I override physics prerequisites?"},
+                {"role": "assistant", "content": CLARIFICATION_TEXT}
+            ]
+        })
         from handler import lambda_handler
 
         response = lambda_handler(event, {})
@@ -238,12 +318,12 @@ class TestHallucinationGuardrails:
         assert parsed["body"]["answered"] is False
         assert parsed["body"]["answer"] is None
         assert parsed["body"]["escalation"]["trigger"] == "no_answer"
-        assert parsed["body"]["escalation"]["office"] == "Registrar's Office"  # routed via 'registration' context keyword
+        assert parsed["body"]["escalation"]["office"] == "Registrar's Office"
 
     @patch("handler.invoke_model")
     @patch("handler.retrieve_context")
     @patch("handler.check_message")
-    def test_citation_validation_failure_escalates(
+    def test_citation_validation_failure_clarifies_on_first_turn(
         self, mock_check, mock_retrieve, mock_invoke
     ):
         mock_check.return_value = {
@@ -260,10 +340,51 @@ class TestHallucinationGuardrails:
                 "score": 0.90,
             }
         ]
-        # LLM writes a fluent answer but neglects to include the retrieved URL citation
         mock_invoke.return_value = "You can request this at Sage Hall. (No link included)"
 
-        event = _apigw_event({"message": "How do I request a card?"})
+        # First turn -> should clarify
+        event = _apigw_event({"message": "How do I request a card?", "history": []})
+        from handler import lambda_handler
+
+        response = lambda_handler(event, {})
+        parsed = _parse_response(response)
+
+        assert parsed["status"] == 200
+        assert parsed["body"]["answered"] is True
+        assert "rephrase or provide a bit more details" in parsed["body"]["answer"]
+        assert parsed["body"]["escalation"] is None
+
+    @patch("handler.invoke_model")
+    @patch("handler.retrieve_context")
+    @patch("handler.check_message")
+    def test_citation_validation_failure_escalates_on_second_turn(
+        self, mock_check, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = {
+            "safe": True,
+            "crisis": False,
+            "crisis_response": None,
+            "escalation": {"needed": False, "category": None},
+        }
+        mock_retrieve.return_value = [
+            {
+                "text": "Official details.",
+                "source_url": "https://csuci.edu/official",
+                "source_title": "Official",
+                "score": 0.90,
+            }
+        ]
+        mock_invoke.return_value = "You can request this at Sage Hall. (No link included)"
+        from handler import CLARIFICATION_TEXT
+
+        # Second turn -> should escalate
+        event = _apigw_event({
+            "message": "How do I request a card?",
+            "history": [
+                {"role": "user", "content": "How do I request a card?"},
+                {"role": "assistant", "content": CLARIFICATION_TEXT}
+            ]
+        })
         from handler import lambda_handler
 
         response = lambda_handler(event, {})

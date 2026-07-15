@@ -1,10 +1,16 @@
-# ==============================================================================
-# CSUCI Student Success Navigator — Project Dependencies
-# ==============================================================================
+# Core AWS SDK
+boto3==1.43.48
+botocore==1.43.48
+s3transfer==0.19.1
+jmespath==1.1.0
+urllib3==2.7.0
+python-dateutil==2.9.0.post0
+six==1.17.0
 
-# AWS SDK
-boto3>=1.35.0
-
-# Testing
-pytest>=8.0.0
-pytest-mock>=3.14.0
+# Testing and Mocking
+pytest==9.1.1
+pytest-mock==3.15.1
+pluggy==1.6.0
+packaging==26.2
+iniconfig==2.3.0
+Pygments==2.20.0

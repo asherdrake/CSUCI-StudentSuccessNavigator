@@ -21,7 +21,7 @@ if _PARENT_DIR not in sys.path:
 from safety_filter import check_message  # noqa: E402
 from retriever import retrieve_context  # noqa: E402
 from prompts import ESCALATION_TEMPLATE, SYSTEM_PROMPT_TEMPLATE  # noqa: E402
-from llm import format_messages_for_converse, invoke_model  # noqa: E402
+from llm import format_messages_for_converse, invoke_model, translate_query_to_english  # noqa: E402
 from router import route_query  # noqa: E402
 
 logger = logging.getLogger()
@@ -36,7 +36,21 @@ _CORS_HEADERS: Dict[str, str] = {
 }
 
 # Score threshold floor for RAG matches
-SCORE_FLOOR = 0.35
+SCORE_FLOOR = 0.40
+
+# Fallback clarification text to prompt student before ticket creation
+CLARIFICATION_TEXT = (
+    "I'm sorry, I couldn't find enough matching information about that in our database. "
+    "Could you please rephrase or provide a bit more details so I can find the right info?"
+)
+
+
+def _has_already_clarified(history: List[dict]) -> bool:
+    """Scan history from bottom up to see if the last bot response was a clarification prompt."""
+    for turn in reversed(history):
+        if turn.get("role") == "assistant":
+            return turn.get("content") == CLARIFICATION_TEXT
+    return False
 
 
 def _build_response(status_code: int, body: Dict[str, Any]) -> Dict[str, Any]:
@@ -58,6 +72,9 @@ def _format_retrieved_chunks(chunks: List[dict]) -> str:
         title = chunk.get("source_title", "Unknown Source")
         url = chunk.get("source_url", "")
         text = chunk.get("text", "").strip()
+        # Truncate extremely long scraped roadmap pages to prevent token limits overflow
+        if len(text) > 2500:
+            text = text[:2500] + "\n... [truncated for length] ..."
         source_ref = f"[{title}]({url})" if url else title
         lines.append(f"**Passage {i}** (source: {source_ref}):\n{text}")
 
@@ -198,53 +215,80 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         )
 
     # --- 3. RAG Retrieval ---
-    retrieved_chunks = retrieve_context(message, top_k=5)
+    search_query = translate_query_to_english(message)
+    logger.info("Original query: '%s' -> Search query: '%s'", message, search_query)
+    retrieved_chunks = retrieve_context(search_query, top_k=3)
     top_score = retrieved_chunks[0]["score"] if retrieved_chunks else 0.0
 
     # Extract unique source list
     citations = _extract_unique_sources(retrieved_chunks)
 
-    # --- 4. Hallucination Guardrail 1: Score Floor check (Retrieve-then-Decide) ---
+    # --- 4. Hallucination Guardrail 1: Score Floor check ---
     if not retrieved_chunks or top_score < SCORE_FLOOR:
         logger.warning(
-            "Low retrieval score (top_score=%f < floor=%f) - skipping LLM call.",
+            "Low retrieval score (top_score=%f < floor=%f) - checking clarification loop.",
             top_score,
             SCORE_FLOOR,
         )
-        # Construct dynamic escalation ticket using router
-        context_text = (
-            f"Zero matching passages retrieved." if not retrieved_chunks
-            else f"Top match score was {top_score:.4f} which is below the floor of {SCORE_FLOOR}."
-        )
-        escalation_payload = route_query(message, context_text)
-        escalation_payload["trigger"] = "no_answer"
         
-        # If user explicitly asked for human, override trigger type
-        if safety_result["escalation"]["needed"]:
-            escalation_payload["trigger"] = "user_requested"
+        if _has_already_clarified(history):
+            # Already clarified once, perform full human escalation
+            context_text = (
+                f"Zero matching passages retrieved." if not retrieved_chunks
+                else f"Top match score was {top_score:.4f} which is below the floor of {SCORE_FLOOR}."
+            )
+            escalation_payload = route_query(message, context_text)
+            escalation_payload["trigger"] = "no_answer"
+            
+            if safety_result["escalation"]["needed"]:
+                escalation_payload["trigger"] = "user_requested"
 
-        _log_interaction(
-            status="low_score_escalate",
-            message=message,
-            answered=False,
-            safety_result=safety_result,
-            chunks_count=len(retrieved_chunks),
-            top_score=top_score,
-            answer=None,
-            citations=[],
-            escalation=escalation_payload,
-            session_id=session_id
-        )
-        return _build_response(
-            200,
-            {
-                "answer": None,
-                "answered": False,
-                "citations": [],
-                "escalation": escalation_payload,
-                "sessionId": session_id,
-            },
-        )
+            _log_interaction(
+                status="low_score_escalate",
+                message=message,
+                answered=False,
+                safety_result=safety_result,
+                chunks_count=len(retrieved_chunks),
+                top_score=top_score,
+                answer=None,
+                citations=[],
+                escalation=escalation_payload,
+                session_id=session_id
+            )
+            return _build_response(
+                200,
+                {
+                    "answer": None,
+                    "answered": False,
+                    "citations": [],
+                    "escalation": escalation_payload,
+                    "sessionId": session_id,
+                },
+            )
+        else:
+            # First turn failure, prompt for clarification
+            _log_interaction(
+                status="low_score_clarify",
+                message=message,
+                answered=True,
+                safety_result=safety_result,
+                chunks_count=len(retrieved_chunks),
+                top_score=top_score,
+                answer=CLARIFICATION_TEXT,
+                citations=[],
+                escalation=None,
+                session_id=session_id
+            )
+            return _build_response(
+                200,
+                {
+                    "answer": CLARIFICATION_TEXT,
+                    "answered": True,
+                    "citations": [],
+                    "escalation": None,
+                    "sessionId": session_id,
+                },
+            )
 
     # --- 5. Build system prompt ---
     formatted_chunks = _format_retrieved_chunks(retrieved_chunks)
@@ -273,71 +317,152 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
     # --- 7. Hallucination Guardrail 2: NO_ANSWER Sentinel Check ---
     if assistant_answer == "NO_ANSWER":
-        logger.warning("LLM returned NO_ANSWER sentinel. Routing to advisor.")
-        escalation_payload = route_query(message, formatted_chunks)
-        escalation_payload["trigger"] = "no_answer"
+        logger.warning("LLM returned NO_ANSWER sentinel. Checking clarification loop.")
         
-        if safety_result["escalation"]["needed"]:
-            escalation_payload["trigger"] = "user_requested"
+        if _has_already_clarified(history):
+            # Already clarified, perform human escalation
+            escalation_payload = route_query(message, formatted_chunks)
+            escalation_payload["trigger"] = "no_answer"
+            
+            if safety_result["escalation"]["needed"]:
+                escalation_payload["trigger"] = "user_requested"
 
-        _log_interaction(
-            status="sentinel_escalate",
-            message=message,
-            answered=False,
-            safety_result=safety_result,
-            chunks_count=len(retrieved_chunks),
-            top_score=top_score,
-            answer=None,
-            citations=[],
-            escalation=escalation_payload,
-            session_id=session_id
-        )
-        return _build_response(
-            200,
-            {
-                "answer": None,
-                "answered": False,
-                "citations": [],
-                "escalation": escalation_payload,
-                "sessionId": session_id,
-            },
-        )
+            _log_interaction(
+                status="sentinel_escalate",
+                message=message,
+                answered=False,
+                safety_result=safety_result,
+                chunks_count=len(retrieved_chunks),
+                top_score=top_score,
+                answer=None,
+                citations=[],
+                escalation=escalation_payload,
+                session_id=session_id
+            )
+            return _build_response(
+                200,
+                {
+                    "answer": None,
+                    "answered": False,
+                    "citations": [],
+                    "escalation": escalation_payload,
+                    "sessionId": session_id,
+                },
+            )
+        else:
+            # First turn failure, prompt for clarification
+            _log_interaction(
+                status="sentinel_clarify",
+                message=message,
+                answered=True,
+                safety_result=safety_result,
+                chunks_count=len(retrieved_chunks),
+                top_score=top_score,
+                answer=CLARIFICATION_TEXT,
+                citations=[],
+                escalation=None,
+                session_id=session_id
+            )
+            return _build_response(
+                200,
+                {
+                    "answer": CLARIFICATION_TEXT,
+                    "answered": True,
+                    "citations": [],
+                    "escalation": None,
+                    "sessionId": session_id,
+                },
+            )
 
     # --- 8. Hallucination Guardrail 3: Citation Validation Check ---
     if not _validate_citations(assistant_answer, citations):
         logger.warning(
-            "Citation validation failed (Answer contains no URLs from citations). Escalating."
+            "Citation validation failed (Answer contains no URLs from citations). Checking clarification loop."
         )
-        escalation_payload = route_query(message, formatted_chunks)
-        escalation_payload["trigger"] = "no_answer"
         
-        if safety_result["escalation"]["needed"]:
-            escalation_payload["trigger"] = "user_requested"
+        if _has_already_clarified(history):
+            # Already clarified, perform human escalation
+            escalation_payload = route_query(message, formatted_chunks)
+            escalation_payload["trigger"] = "no_answer"
+            
+            if safety_result["escalation"]["needed"]:
+                escalation_payload["trigger"] = "user_requested"
 
-        _log_interaction(
-            status="citation_validation_failed_escalate",
-            message=message,
-            answered=False,
-            safety_result=safety_result,
-            chunks_count=len(retrieved_chunks),
-            top_score=top_score,
-            answer=None,
-            citations=[],
-            escalation=escalation_payload,
-            session_id=session_id
-        )
-        return _build_response(
-            200,
-            {
-                "answer": None,
-                "answered": False,
-                "citations": [],
-                "escalation": escalation_payload,
-                "sessionId": session_id,
-            },
-        )
+            _log_interaction(
+                status="citation_validation_failed_escalate",
+                message=message,
+                answered=False,
+                safety_result=safety_result,
+                chunks_count=len(retrieved_chunks),
+                top_score=top_score,
+                answer=None,
+                citations=[],
+                escalation=escalation_payload,
+                session_id=session_id
+            )
+            return _build_response(
+                200,
+                {
+                    "answer": None,
+                    "answered": False,
+                    "citations": [],
+                    "escalation": escalation_payload,
+                    "sessionId": session_id,
+                },
+            )
+        else:
+            # First turn failure, prompt for clarification
+            _log_interaction(
+                status="citation_validation_clarify",
+                message=message,
+                answered=True,
+                safety_result=safety_result,
+                chunks_count=len(retrieved_chunks),
+                top_score=top_score,
+                answer=CLARIFICATION_TEXT,
+                citations=[],
+                escalation=None,
+                session_id=session_id
+            )
+            return _build_response(
+                200,
+                {
+                    "answer": CLARIFICATION_TEXT,
+                    "answered": True,
+                    "citations": [],
+                    "escalation": None,
+                    "sessionId": session_id,
+                },
+            )
 
     # --- 9. Check Safety Handoff / User-Requested Escalation ---
+    # Append physical location details to final text answer if user asked for locations/maps and it is missing
+    location_keywords = ["location", "address", "map", "maps", "directions", "where is", "located", "room number"]
+    if assistant_answer and any(kw in message.lower() for kw in location_keywords) and "maps.google.com" not in assistant_answer:
+        answer_lower = assistant_answer.lower()
+        
+        # Parse which building is referenced to generate an accurate maps query
+        location_name = "CSUCI Campus"
+        map_query = "California+State+University+Channel+Islands"
+        
+        if "sage hall" in answer_lower or "sage" in answer_lower:
+            location_name = "Sage Hall"
+            map_query = "Sage+Hall+CSU+Channel+Islands"
+        elif "broome library" in answer_lower or "broome" in answer_lower or "library" in answer_lower:
+            location_name = "John Spoor Broome Library"
+            map_query = "John+Spoor+Broome+Library+CSU+Channel+Islands"
+        elif "beacon hall" in answer_lower or "beacon" in answer_lower:
+            location_name = "Beacon Hall"
+            map_query = "Beacon+Hall+CSU+Channel+Islands"
+        elif "bell tower" in answer_lower:
+            location_name = "Bell Tower"
+            map_query = "Bell+Tower+CSU+Channel+Islands"
+            
+        assistant_answer += (
+            f"\n\n**Location Directions:**\n"
+            f"View building location on the map: [{location_name} Google Maps Link](https://maps.google.com/?q={map_query})"
+        )
+
     escalation_payload = None
     if safety_result["escalation"]["needed"]:
         # If student asked for a human, route to the right office but keep answered=True

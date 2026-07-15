@@ -62,6 +62,8 @@ def format_messages_for_converse(
 
     This helper wraps the ``content`` string in the required ``[{"text": ...}]``
     list structure, then appends the current user message at the end.
+    To prevent context token limit overflow on Bedrock, we only retain
+    the last 10 turns (5 user-assistant exchanges) of history.
 
     Args:
         conversation_history: Prior turns passed directly from the client.
@@ -72,7 +74,14 @@ def format_messages_for_converse(
     """
     messages: list[dict] = []
 
-    for turn in conversation_history:
+    # Retain only the last 10 turns to avoid exceeding the 8192 context token limit
+    pruned_history = (
+        conversation_history[-10:]
+        if len(conversation_history) > 10
+        else conversation_history
+    )
+
+    for turn in pruned_history:
         role = turn.get("role", "user")
         content = turn.get("content", "")
         messages.append(
@@ -156,3 +165,32 @@ def invoke_model(
     )
 
     return assistant_text
+
+
+def translate_query_to_english(query: str) -> str:
+    """Translate the student's query to English to optimize vector search.
+
+    If already in English, it returns the query unchanged.
+    """
+    system_prompt = (
+        "You are a translation helper. Translate the user's message into plain English. "
+        "If it is already in English, return it exactly as is. "
+        "Output ONLY the final English translation text, with no introduction, no surrounding quotes, and no extra notes."
+    )
+    messages = [
+        {
+            "role": "user",
+            "content": [{"text": query}]
+        }
+    ]
+    try:
+        translation = invoke_model(
+            system_prompt=system_prompt,
+            messages=messages,
+            temperature=0.0,
+            max_tokens=64
+        )
+        return translation.strip().strip('"').strip("'")
+    except Exception:
+        logger.warning("Query translation failed, falling back to original text.")
+        return query
