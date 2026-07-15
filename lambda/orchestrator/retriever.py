@@ -35,6 +35,29 @@ def _get_client():
     return _client
 
 
+def _clean_web_title(url: str) -> str:
+    """Extract a clean, human-readable title from a web URL path."""
+    if not url:
+        return "CSUCI Webpage"
+    # Strip protocol and www
+    clean_url = url.replace("https://", "").replace("http://", "").replace("www.", "")
+    # Split path
+    parts = [p for p in clean_url.split("/") if p]
+    if not parts:
+        return "CSUCI Homepage"
+    
+    # Get the last segment
+    last_segment = parts[-1]
+    # If the last segment is an index/home file extension, check the preceding directory name
+    if last_segment.split(".")[-1] in ["html", "htm", "php", "asp", "aspx"] or last_segment == "index":
+        if len(parts) > 1:
+            last_segment = parts[-2]
+            
+    # Remove file extensions, hyphens, and underscores
+    name = last_segment.rsplit(".", 1)[0].replace("-", " ").replace("_", " ")
+    return name.title() if name else "CSUCI Page"
+
+
 def _extract_source_metadata(
     retrieval_result: dict[str, Any],
 ) -> tuple[str, str]:
@@ -69,15 +92,15 @@ def _extract_source_metadata(
     elif location.get("type") == "WEB":
         web_loc = location.get("webLocation", {})
         source_url = web_loc.get("url", "")
-        source_title = source_url  # fall back to URL as title
+        source_title = _clean_web_title(source_url)
 
     # Confluence / custom
     elif location.get("type") == "CONFLUENCE":
         confluence_loc = location.get("confluenceLocation", {})
         source_url = confluence_loc.get("url", "")
-        source_title = source_url
+        source_title = _clean_web_title(source_url)
 
-    # Override title/URL with metadata if the KB provides one (e.g. from .metadata.json sidecars)
+    # Override title/URL with metadata if the KB provides one
     metadata: dict = retrieval_result.get("metadata", {})
     
     if metadata.get("source_url"):

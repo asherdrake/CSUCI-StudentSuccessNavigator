@@ -338,6 +338,33 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         )
 
     # --- 9. Check Safety Handoff / User-Requested Escalation ---
+    # Append physical location details to final text answer if user asked for locations/maps and it is missing
+    location_keywords = ["location", "address", "map", "maps", "directions", "where is", "located", "room number"]
+    if assistant_answer and any(kw in message.lower() for kw in location_keywords) and "maps.google.com" not in assistant_answer:
+        answer_lower = assistant_answer.lower()
+        
+        # Parse which building is referenced to generate an accurate maps query
+        location_name = "CSUCI Campus"
+        map_query = "California+State+University+Channel+Islands"
+        
+        if "sage hall" in answer_lower or "sage" in answer_lower:
+            location_name = "Sage Hall"
+            map_query = "Sage+Hall+CSU+Channel+Islands"
+        elif "broome library" in answer_lower or "broome" in answer_lower or "library" in answer_lower:
+            location_name = "John Spoor Broome Library"
+            map_query = "John+Spoor+Broome+Library+CSU+Channel+Islands"
+        elif "beacon hall" in answer_lower or "beacon" in answer_lower:
+            location_name = "Beacon Hall"
+            map_query = "Beacon+Hall+CSU+Channel+Islands"
+        elif "bell tower" in answer_lower:
+            location_name = "Bell Tower"
+            map_query = "Bell+Tower+CSU+Channel+Islands"
+            
+        assistant_answer += (
+            f"\n\n**Location Directions:**\n"
+            f"View building location on the map: [{location_name} Google Maps Link](https://maps.google.com/?q={map_query})"
+        )
+
     escalation_payload = None
     if safety_result["escalation"]["needed"]:
         # If student asked for a human, route to the right office but keep answered=True

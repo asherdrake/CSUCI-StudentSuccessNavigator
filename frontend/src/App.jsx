@@ -343,6 +343,11 @@ function App() {
                     {msg.escalation && (
                       <div className="escalation-alert-box">
                         <h3>⚠️ Human Advisor Handoff</h3>
+                        {msg.escalation.reason && (
+                          <p style={{ fontSize: '13px', margin: '6px 0 12px 0', opacity: 0.85 }}>
+                            {msg.escalation.reason}
+                          </p>
+                        )}
                         <p>We are transferring your question to the appropriate campus office:</p>
                         <div className="escalation-details">
                           <strong>Office:</strong> {msg.escalation.office}<br />
