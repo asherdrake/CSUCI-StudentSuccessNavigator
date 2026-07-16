@@ -1,4 +1,5 @@
 import ChatInput from './ChatInput';
+import DolphinLoader from '../DolphinLoader';
 
 /** Landing view shown before the first user message. */
 export default function ChatHome({ input, setInput, loading, onSubmit, language, onLanguageChange }) {
@@ -7,6 +8,10 @@ export default function ChatHome({ input, setInput, loading, onSubmit, language,
       <div className="gemini-content-wrapper">
         {/* Centered intense red radial fade backplate */}
         <div className="gemini-glow-bg"></div>
+
+        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '24px' }}>
+          <DolphinLoader size={80} />
+        </div>
 
         <h2 className="gemini-greeting">I&apos;m Ekho, how may I help you today?</h2>
 
