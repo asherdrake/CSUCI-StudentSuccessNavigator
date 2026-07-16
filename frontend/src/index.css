@@ -488,7 +488,7 @@ body {
   background-image: var(--chatbot-bg-sticker, none);
   background-repeat: no-repeat;
   background-position: center;
-  background-size: 320px; /* Adjust scale size of the sticker as desired */
+  background-size: 480px; /* Adjust scale size of the sticker as desired */
   opacity: var(--chatbot-bg-sticker-opacity, 0.04);
   pointer-events: none; /* Prevents blocking clicks or interactions on text/inputs */
   z-index: 0; /* Behind all chat bubbles, headers, inputs, and buttons */
