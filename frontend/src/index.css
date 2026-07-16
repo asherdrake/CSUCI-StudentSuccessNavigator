@@ -119,9 +119,10 @@ body {
   width: 64px;
   height: 64px;
   border-radius: 50%;
-  background: var(--csuci-red);
+  background: linear-gradient(135deg, #FF3D4F 0%, #C51B29 100%);
   color: var(--csuci-white);
-  box-shadow: var(--shadow-bubble);
+  border: 3px solid var(--csuci-white);
+  box-shadow: 0 0 15px rgba(255, 255, 255, 0.65), var(--shadow-bubble);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -129,11 +130,12 @@ body {
   z-index: 999;
   user-select: none;
   touch-action: none;
-  transition: transform 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.25s ease;
+  transition: transform 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.25s ease, box-shadow 0.3s ease;
 }
 
 .chat-trigger-bubble:hover {
   transform: scale(1.15) translateY(-4px);
+  box-shadow: 0 0 25px rgba(255, 255, 255, 0.95), 0 12px 35px rgba(197, 27, 41, 0.45);
 }
 
 .chat-trigger-bubble:active {
