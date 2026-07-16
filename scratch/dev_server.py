@@ -29,7 +29,7 @@ def load_env():
                 if not line or line.startswith("#") or "=" not in line:
                     continue
                 key, val = line.split("=", 1)
-                os.environ[key.strip()] = val.strip()
+                os.environ[key.strip()] = val.strip().strip('"').strip("'")
         print("Loaded environment variables from .env")
 
 class LambdaDevHandler(BaseHTTPRequestHandler):
