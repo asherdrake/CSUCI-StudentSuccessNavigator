@@ -79,6 +79,13 @@ export function useChat() {
     ]);
 
     try {
+      console.log('>>> [useChat] Sending user question to backend:', {
+        message: userQuery,
+        history: history,
+        sessionId: sessionId,
+        language: language
+      });
+
       const response = await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -95,6 +102,7 @@ export function useChat() {
       }
 
       const data = await response.json();
+      console.log('<<< [useChat] Received response from backend:', data);
 
       if (data.sessionId) {
         setSessionId(data.sessionId);
