@@ -1,0 +1,109 @@
+Created At: 2026-07-16T06:24:47Z
+Completed At: 2026-07-16T06:24:47Z
+File Path: `file:///c:/Users/myane/OneDrive/Desktop/CSUCI-StudentSuccessNavigator-main/frontend/src/DolphinLoader.jsx`
+Total Lines: 372
+Total Bytes: 10898
+Showing lines 250 to 350
+The following code has been modified to include a line number before every line, in the format: <line_number>: <original_line>. Please note that any changes targeting the original code should remove the line number, colon, and leading space.
+250:   const [frameIndex, setFrameIndex] = useState(0);
+251:   const [isJumping, setIsJumping] = useState(false);
+252:   const jumpTimerRef = useRef(null);
+253:   const idleTimerRef = useRef(null);
+254: 
+255:   // 1. Idle ripple effect
+256:   useEffect(() => {
+257:     let rippleInterval;
+258:     if (!isJumping) {
+259:       rippleInterval = setInterval(() => {
+260:         setFrameIndex(prev => (prev === 0 ? 1 : 0));
+261:       }, 500);
+262:     }
+263:     return () => clearInterval(rippleInterval);
+264:   }, [isJumping]);
+265: 
+266:   // 2. Idle auto-jump loop
+267:   useEffect(() => {
+268:     const resetIdleTimer = () => {
+269:       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+270:       if (!isJumping) {
+271:         idleTimerRef.current = setTimeout(() => {
+272:           triggerJump();
+273:         }, idleInterval);
+274:       }
+275:     };
+276: 
+277:     resetIdleTimer();
+278:     return () => {
+279:       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+280:     };
+281:   }, [isJumping, idleInterval]);
+282: 
+283:   // 3. Trigger jump animation sequence
+284:   const triggerJump = () => {
+285:     if (isJumping) return; // Ignore if already leaping
+286:     
+287:     setIsJumping(true);
+288:     let currentFrame = 2; // Jump start frame
+289:     setFrameIndex(currentFrame);
+290: 
+291:     if (jumpTimerRef.current) clearInterval(jumpTimerRef.current);
+292:     
+293:     jumpTimerRef.current = setInterval(() => {
+294:       currentFrame++;
+295:       if (currentFrame < FRAMES.length) {
+296:         setFrameIndex(currentFrame);
+297:       } else {
+298:         clearInterval(jumpTimerRef.current);
+299:         setIsJumping(false);
+300:         setFrameIndex(0); // Return to puddle idle A
+301:       }
+302:     }, 90); // 90ms per frame for a crisp, snappy jump
+303:   };
+304: 
+305:   // Clean up timers on unmount
+306:   useEffect(() => {
+307:     return () => {
+308:       if (jumpTimerRef.current) clearInterval(jumpTimerRef.current);
+309:       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+310:     };
+311:   }, []);
+312: 
+313:   // Pre-generate rects mapping for the active frame to maximize render speed
+314:   const activeFrame = FRAMES[frameIndex] || FRAMES[0];
+315:   const rects = [];
+316:   
+317:   activeFrame.forEach((row, y) => {
+318:     for (let x = 0; x < row.length; x++) {
+319:       const char = row[x];
+320:       const color = COLORS[char];
+321:       if (color) {
+322:         rects.push(
+323:           <rect
+324:             key={`${y}-${x}`}
+325:             x={x}
+326:             y={y}
+327:             width={1}
+328:             height={1}
+329:             fill={color}
+330:           />
+331:         );
+332:       }
+333:     }
+334:   });
+335: 
+336:   return (
+337:     <div 
+338:       className={`dolphin-loader-wrapper ${className}`}
+339:       onMouseEnter={triggerJump}
+340:       onClick={triggerJump}
+341:       onTouchStart={triggerJump}
+342:       style={{
+343:         width: size,
+344:         height: size,
+345:         overflow: 'hidden',
+346:         display: 'inline-flex',
+347:         justifyContent: 'center',
+348:         alignItems: 'center',
+349:         background: 'transparent',
+350:         cursor: isJumping ? 'default' : 'pointer',
+The above content does NOT show the entire file contents. If you need to view any lines of the file which were not shown to complete your task, call this tool again to view those lines.

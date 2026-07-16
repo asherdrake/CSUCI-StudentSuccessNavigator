@@ -1,0 +1,75 @@
+Created At: 2026-07-16T06:24:51Z
+Completed At: 2026-07-16T06:24:52Z
+The following changes were made by the replace_file_content tool to: c:\Users\myane\OneDrive\Desktop\CSUCI-StudentSuccessNavigator-main\frontend\src\DolphinLoader.jsx. If relevant, proactively run terminal commands to execute this code for the USER. Don't ask for permission.
+[diff_block_start]
+@@ -280,6 +280,19 @@
+     };
+   }, [isJumping, idleInterval]);
+ 
++  // Frame durations in milliseconds
++  // Frame 2 and 3 (0.05 seconds / 50ms) to jump out quickly.
++  // Frame 4 (Apex) stays on screen for 600ms (0.6 seconds) to float in the air.
++  // Frame 5 (0.05 seconds / 50ms) to dive back down quickly.
++  const FRAME_DURATIONS = {
++    2: 50,   // Bulge (emerging)
++    3: 50,   // Launching
++    4: 600,  // Apex (Hang time at the top of the arc!)
++    5: 50,   // Diving
++    6: 120,  // Splashdown
++    7: 120,  // Settling
++  };
++
+   // 3. Trigger jump animation sequence
+   const triggerJump = () => {
+     if (isJumping) return; // Ignore if already leaping
+@@ -286,19 +286,26 @@
+     setIsJumping(true);
+-    let currentFrame = 2; // Jump start frame
+-    setFrameIndex(currentFrame);
+-
+-    if (jumpTimerRef.current) clearInterval(jumpTimerRef.current);
+-    
+-    jumpTimerRef.current = setInterval(() => {
+-      currentFrame++;
+-      if (currentFrame < FRAMES.length) {
+-        setFrameIndex(currentFrame);
++    if (jumpTimerRef.current) clearTimeout(jumpTimerRef.current);
++    
++    const runFrame = (frameIdx) => {
++      setFrameIndex(frameIdx);
++      
++      if (frameIdx < FRAMES.length - 1) {
++        const nextFrame = frameIdx + 1;
++        const duration = FRAME_DURATIONS[nextFrame] || 50;
++        
++        jumpTimerRef.current = setTimeout(() => {
++          runFrame(nextFrame);
++        }, duration);
+       } else {
+-        clearInterval(jumpTimerRef.current);
+-        setIsJumping(false);
+-        setFrameIndex(0); // Return to puddle idle A
+-      }
+-    }, 90); // 90ms per frame for a crisp, snappy jump
++        // End of jump, return to puddle
++        jumpTimerRef.current = setTimeout(() => {
++          setIsJumping(false);
++          setFrameIndex(0);
++        }, 120);
++      }
++    };
++
++    runFrame(2); // Start at Frame 2
+   };
+ 
+   // Clean up timers on unmount
+@@ -305,5 +305,5 @@
+     return () => {
+-      if (jumpTimerRef.current) clearInterval(jumpTimerRef.current);
++      if (jumpTimerRef.current) clearTimeout(jumpTimerRef.current);
+       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+     };
+   }, []);
+[diff_block_end]
+
+Please note that the above snippet only shows the MODIFIED lines from the last change. It shows up to 3 lines of unchanged lines before and after the modified lines. The actual file contents may have many more lines not shown.

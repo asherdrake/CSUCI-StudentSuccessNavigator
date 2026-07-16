@@ -1,0 +1,35 @@
+I have designed and built a self-contained, 5-frame leaping pixel-art dolphin animation using a horizontal SVG sprite-sheet and CSS `steps()` timing.
+
+### 1. Reusable React Component (`DolphinLoader.jsx`)
+I created the component [DolphinLoader.jsx](file:///c:/Users/myane/OneDrive/Desktop/CSUCI-StudentSuccessNavigator-main/frontend/src/DolphinLoader.jsx) under the frontend source.
+* **Pixel Grid**: The animation is drawn on a retro `24x24` canvas.
+* **Palette**: 5 curated colors are used: Navy Outline (`#002D62`), Mid Blue Body (`#005A9C`), White Belly (`#FFFFFF`), Splash Light Blue (`#A1E3F9`), and Splash Highlight (`#E8F9FF`).
+* **Self-Contained**: The pixels are stored as string rows in a JS array inside the component and rendered dynamically to `<rect>` tags to keep file imports and source codes completely clean.
+* **Animation Sequence**: 
+  1. *Frame 0*: Horizontal Swim Prep (submerged)
+  2. *Frame 1*: Launch (breaking water at 45° with base ripples)
+  3. *Frame 2*: Apex (fully arched high in the air)
+  4. *Frame 3*: Dive (head-first reentry)
+  5. *Frame 4*: Splashdown (impact splash rising)
+
+---
+
+### 2. Preview the Animation
+To preview the animation in your browser before integrating it, open the standalone preview page I created:
+👉 **[dolphin_preview.html](file:///c:/Users/myane/OneDrive/Desktop/CSUCI-StudentSuccessNavigator-main/frontend/dolphin_preview.html)**
+
+You can double-click this file or open it in your browser. It includes:
+* The live animated SVG.
+* Dynamic sizing buttons to preview it at different crisp pixel dimensions (`64px`, `128px`, and `256px`).
+* Perfect blocky retro rendering via CSS `image-rendering: pixelated;`.
+
+---
+
+### 3. Verification & Build
+I ran a verification build in the frontend folder, and it compiled successfully with no syntax or compiler warnings:
+```bash
+vite v8.1.4 building client environment for production...
+✓ built in 187ms
+```
+
+Let me know if you would like me to wire the `<DolphinLoader />` directly into the chat interface (e.g., as the bot's loading/thinking bubble or empty state) next!

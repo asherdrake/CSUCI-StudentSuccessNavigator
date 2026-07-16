@@ -1,0 +1,29 @@
+I have redesigned and rebuilt the dolphin mascot to match your new reference image and implemented the interactive, rippling puddle leap animation!
+
+Here is what I did:
+1. **Extracted Reference Dolphin**:
+   Using Pillow, I scanned your reference image at its exact grid intervals (`20x28` blocky layout) to extract the dolphin silhouette and colors pixel-by-pixel:
+   * Outline: `#000000` (Black)
+   * Body: `#6fa9e9` (Light blue)
+   * Back: `#5fa0b0` (Teal)
+   * Belly: `#ffffff` (White highlight)
+   * Eye: A single black pixel.
+
+2. **Created the Animation Frames (`DolphinLoader.jsx`)**:
+   Designed a 7-frame sequence inside [`DolphinLoader.jsx`](file:///c:/Users/myane/OneDrive/Desktop/CSUCI-StudentSuccessNavigator-main/frontend/src/DolphinLoader.jsx):
+   * **Frames 0 & 1 (Idle Puddle)**: An alternating, rippling puddle that "breathes" to indicate the dolphin is hiding underneath.
+   * **Frame 2 (Breakout)**: The puddle bulges upward, and the dolphin snout begins to emerge.
+   * **Frame 3 (Ascending)**: The dolphin rises at a 45° angle, nose first, with splash ripples below.
+   * **Frame 4 (Apex)**: The dolphin is high in the air, arched horizontally (representing the exact shape and proportions of your reference image!).
+   * **Frame 5 (Diving)**: The dolphin curves downward, heading beak-first back into the water.
+   * **Frame 6 (Splashdown)**: The dolphin is submerged, and a tall water spray shoots up.
+   * **Frame 7 (Settling)**: The splash settles, transitioning smoothly back into the idle puddle.
+
+3. **Added Interactive & Idle Triggers**:
+   * **Hover (`onMouseEnter`)**: Hovering over the puddle causes it to ripple and the dolphin to leap.
+   * **Click / Tap (`onClick` / `onTouchStart`)**: Clicking or tapping triggers the jump sequence.
+   * **Auto-Jump Loop**: When idle, the puddle ripples and the dolphin automatically leaps once every **6 seconds** (`idleInterval={6000}`).
+
+4. **Rebuilt & Opened App**:
+   * Recompiled the application (`npm run build`).
+   * Opened the app in your browser at **[http://localhost:8000/](http://localhost:8000/)** so you can hover or click on the puddle directly above the `US EN` dropdown to test the interactive leap!

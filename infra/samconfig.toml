@@ -1,0 +1,22 @@
+# samconfig.toml — SAM CLI default deployment configuration
+# Run `sam deploy` from the infra/ directory; these values are used
+# automatically unless overridden with --parameter-overrides on the CLI.
+
+version = 0.1
+
+[default.deploy.parameters]
+stack_name           = "student-success-navigator"
+region               = "us-west-2"
+capabilities         = "CAPABILITY_IAM"
+confirm_changeset    = true
+resolve_s3           = true                      # auto-create S3 bucket for artifacts
+s3_prefix            = "student-success-navigator"
+
+# Provide the Bedrock Knowledge Base ID before deploying.
+# Example:
+#   sam deploy --parameter-overrides BedrockKBId=XXXXXXXXXX Environment=dev
+parameter_overrides  = "BedrockKBId=\"REPLACE_WITH_YOUR_KB_ID\" Environment=\"dev\""
+
+[default.build.parameters]
+cached  = true
+parallel = true

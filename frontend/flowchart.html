@@ -1,0 +1,1036 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSU Academic Major Advising Flowchart Template</title>
+    <style>
+        /* Print-ready Landscape Setup */
+        @page {
+            size: letter landscape;
+            margin: 0.4in;
+        }
+
+        /* Typography & Colors resembling official handouts */
+        body {
+            font-family: 'Arial', 'Helvetica Neue', Helvetica, sans-serif;
+            color: #111111;
+            background-color: #ffffff;
+            margin: 0;
+            padding: 0;
+            font-size: 11px;
+            line-height: 1.3;
+        }
+
+        .flowchart-page {
+            width: 100%;
+            max-width: 1120px;
+            margin: 0 auto;
+            background-color: #ffffff;
+        }
+
+        /* Formal Header */
+        header {
+            display: grid;
+            grid-template-columns: 1.2fr 1.6fr 1.2fr;
+            border-bottom: 2px solid #000000;
+            padding-bottom: 6px;
+            margin-bottom: 10px;
+            align-items: end;
+        }
+
+        .header-left h1 {
+            font-size: 11px;
+            text-transform: uppercase;
+            font-weight: bold;
+            margin: 0;
+            letter-spacing: 0.5px;
+        }
+
+        .header-left h2 {
+            font-size: 9px;
+            font-weight: normal;
+            color: #555555;
+            margin: 2px 0 0 0;
+        }
+
+        .header-center {
+            text-align: center;
+        }
+
+        .header-center h3 {
+            font-size: 15px;
+            font-weight: 800;
+            text-transform: uppercase;
+            margin: 0;
+            letter-spacing: 0.5px;
+        }
+
+        .header-center p {
+            font-size: 10px;
+            margin: 3px 0 0 0;
+            font-weight: bold;
+            color: #333333;
+        }
+
+        .header-right {
+            text-align: right;
+            font-size: 9px;
+        }
+
+        .header-right p {
+            margin: 0 0 2px 0;
+        }
+
+        /* Student & Advisor Metadata Info Block */
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            border: 1px solid #000000;
+            margin-bottom: 12px;
+            background-color: #fcfcfc;
+        }
+
+        .info-cell {
+            padding: 4px 8px;
+            border-right: 1px solid #000000;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .info-cell:last-child {
+            border-right: none;
+        }
+
+        .info-label {
+            font-size: 8px;
+            font-weight: bold;
+            text-transform: uppercase;
+            color: #444444;
+        }
+
+        .info-value {
+            font-size: 10px;
+            border: none;
+            background: transparent;
+            font-family: inherit;
+            width: 100%;
+            padding: 0;
+            margin: 0;
+            color: #111111;
+        }
+
+        .info-value:focus {
+            outline: 1px dashed #999999;
+        }
+
+        /* Main flowchart layout columns */
+        .year-header-row {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            border: 1px solid #000000;
+            border-bottom: 2px solid #000000;
+            background-color: #e5e5e5;
+            text-align: center;
+            font-weight: bold;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .year-header {
+            padding: 4px 0;
+            border-right: 1px solid #000000;
+        }
+
+        .year-header:last-child {
+            border-right: none;
+        }
+
+        .semester-grid {
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            border-left: 1px solid #000000;
+            border-right: 1px solid #000000;
+            border-bottom: 1px solid #000000;
+        }
+
+        .semester-column {
+            border-right: 1px solid #cccccc;
+            padding: 6px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            min-height: 380px;
+            background-color: #fafafa;
+        }
+
+        /* Double border separating academic years */
+        .semester-column:nth-child(2n) {
+            border-right: 1px solid #000000;
+        }
+
+        .semester-column:last-child {
+            border-right: none;
+        }
+
+        .sem-title-row {
+            text-align: center;
+            border-bottom: 1px solid #dddddd;
+            padding-bottom: 4px;
+            margin-bottom: 4px;
+        }
+
+        .sem-title {
+            font-weight: bold;
+            font-size: 9px;
+            color: #333333;
+            text-transform: uppercase;
+        }
+
+        .unit-count {
+            font-size: 8px;
+            color: #666666;
+            margin-top: 1px;
+            display: block;
+        }
+
+        /* Color-coded course boxes */
+        .course-box {
+            border: 1px solid #000000;
+            border-radius: 2px;
+            padding: 5px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            min-height: 52px;
+            position: relative;
+            background-color: #ffffff;
+            transition: transform 0.1s ease;
+        }
+
+        .course-box:hover {
+            transform: scale(1.02);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .course-title {
+            font-weight: bold;
+            font-size: 8.5px;
+            line-height: 1.15;
+            margin-bottom: 3px;
+        }
+
+        .course-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 7.5px;
+            color: #333333;
+            margin-top: auto;
+        }
+
+        .course-code {
+            font-weight: bold;
+            color: #555555;
+        }
+
+        .course-units {
+            font-weight: bold;
+        }
+
+        .prereq-label {
+            font-style: italic;
+            color: #555555;
+            font-size: 7.5px;
+            line-height: 1;
+            margin-top: 2px;
+            border-top: 1px dashed rgba(0, 0, 0, 0.1);
+            padding-top: 2px;
+        }
+
+        /* Color definitions */
+        .color-ge {
+            background-color: #fffbeb !important; /* pale yellow */
+            border-color: #d97706;
+        }
+        .color-prep {
+            background-color: #fff1f2 !important; /* pale pink */
+            border-color: #db2777;
+        }
+        .color-core {
+            background-color: #eff6ff !important; /* pale blue */
+            border-color: #2563eb;
+        }
+        .color-option {
+            background-color: #f0fdf4 !important; /* pale green */
+            border-color: #16a34a;
+        }
+        .color-other {
+            background-color: #f5f5f4 !important; /* light gray */
+            border-color: #57534e;
+        }
+
+        /* Bottom Sections Layout */
+        .bottom-sections {
+            display: grid;
+            grid-template-columns: 1.2fr 1fr 1fr;
+            gap: 12px;
+            margin-top: 12px;
+        }
+
+        .bottom-card {
+            border: 1px solid #000000;
+            padding: 8px;
+            background-color: #ffffff;
+        }
+
+        .bottom-card h4 {
+            font-size: 10px;
+            text-transform: uppercase;
+            font-weight: bold;
+            margin: 0 0 6px 0;
+            border-bottom: 1px solid #000000;
+            padding-bottom: 3px;
+        }
+
+        /* Legend Grid */
+        .legend-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 6px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 8.5px;
+        }
+
+        .legend-swatch {
+            width: 14px;
+            height: 14px;
+            border: 1px solid #000000;
+            border-radius: 1px;
+            flex-shrink: 0;
+        }
+
+        /* Bullet guidelines list */
+        .bullet-list {
+            margin: 0;
+            padding-left: 14px;
+            font-size: 8.5px;
+            color: #222222;
+        }
+
+        .bullet-list li {
+            margin-bottom: 4px;
+        }
+
+        /* Checklist Items */
+        .checklist-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 5px;
+        }
+
+        .checklist-group {
+            margin-bottom: 6px;
+        }
+
+        .checklist-group-title {
+            font-weight: bold;
+            font-size: 8px;
+            color: #555555;
+            text-transform: uppercase;
+            margin-bottom: 3px;
+        }
+
+        .checklist-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 8.5px;
+            margin-bottom: 2px;
+        }
+
+        .checklist-item input[type="checkbox"] {
+            margin: 0;
+            width: 11px;
+            height: 11px;
+            cursor: pointer;
+        }
+
+        /* Return Link for Interactive usage */
+        .nav-controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 15px;
+            padding-top: 10px;
+            border-top: 1px dashed #cccccc;
+        }
+
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            text-decoration: none;
+            color: #c51b27;
+            font-weight: bold;
+            font-size: 11px;
+        }
+
+        .back-link:hover {
+            text-decoration: underline;
+        }
+
+        .print-btn {
+            background-color: #c51b27;
+            color: #ffffff;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .print-btn:hover {
+            background-color: #9a101b;
+        }
+
+        /* Print Media overrides for authentic handout rendering */
+        @media print {
+            .nav-controls {
+                display: none !important;
+            }
+            body {
+                background-color: #ffffff;
+                color: #000000;
+            }
+            .course-box {
+                page-break-inside: avoid;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="flowchart-page">
+        <!-- Document Header -->
+        <header>
+            <div class="header-left">
+                <h1>California State University</h1>
+                <h2>Advising & Academic Roadmaps</h2>
+            </div>
+            <div class="header-center">
+                <h3 id="doc-major-name">Finance Curriculum Roadmap</h3>
+                <p>Bachelor of Science / Bachelor of Arts Curriculum Roadmap</p>
+            </div>
+            <div class="header-right">
+                <p><strong>Catalog Year:</strong> <span id="doc-catalog-year">2025</span></p>
+                <p><strong>Total Units:</strong> <span id="doc-total-units">120</span> Minimum</p>
+            </div>
+        </header>
+
+        <!-- Student Data Metadata Input Grid -->
+        <div class="info-grid">
+            <div class="info-cell">
+                <span class="info-label">Student Name</span>
+                <input type="text" class="info-value" placeholder="[Enter Student Name]" value="">
+            </div>
+            <div class="info-cell">
+                <span class="info-label">Student ID Number</span>
+                <input type="text" class="info-value" placeholder="[Enter Student ID]" value="">
+            </div>
+            <div class="info-cell">
+                <span class="info-label">Academic Advisor</span>
+                <input type="text" class="info-value" placeholder="[Enter Advisor Name]" value="">
+            </div>
+            <div class="info-cell">
+                <span class="info-label">Date of Consultation</span>
+                <input type="text" class="info-value" placeholder="[Select Date]" value="">
+            </div>
+        </div>
+
+        <!-- Academic Standing column headers -->
+        <div class="year-header-row">
+            <div class="year-header">Freshman (0 - 29 Units)</div>
+            <div class="year-header">Sophomore (30 - 59 Units)</div>
+            <div class="year-header">Junior (60 - 89 Units)</div>
+            <div class="year-header">Senior (90+ Units)</div>
+        </div>
+
+        <!-- Semester columns containing academic courses -->
+        <div class="semester-grid" id="semesters-container">
+            <!-- Dynamic content injected here by JS -->
+        </div>
+
+        <!-- Footer: Legend, Checklist, Notes -->
+        <div class="bottom-sections">
+            <!-- Section 1: Legend -->
+            <div class="bottom-card">
+                <h4>Course Category Legend</h4>
+                <div class="legend-grid">
+                    <div class="legend-item">
+                        <div class="legend-swatch color-ge"></div>
+                        <span>General Education (GE)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-swatch color-prep"></div>
+                        <span>Major Preparation</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-swatch color-core"></div>
+                        <span>Major Core</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-swatch color-option"></div>
+                        <span>Option / Concentration</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-swatch color-other"></div>
+                        <span>Other Requirements / Electives</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Section 2: Checklist & Other Degree requirements -->
+            <div class="bottom-card">
+                <h4>Degree Progress Checklist</h4>
+                <div class="checklist-grid" id="checklist-container">
+                    <!-- Dynamic content injected here by JS -->
+                </div>
+            </div>
+
+            <!-- Section 3: Advising Notes -->
+            <div class="bottom-card">
+                <h4>Important Advising Notes</h4>
+                <ul class="bullet-list" id="notes-container">
+                    <!-- Dynamic content injected here by JS -->
+                </ul>
+            </div>
+        </div>
+
+        <!-- Navigation Controls (Interactive) -->
+        <div class="nav-controls">
+            <a href="index.html" class="back-link">&larr; Back to Student Navigator Chatbot</a>
+            <button onclick="window.print()" class="print-btn">Print Document / Save PDF</button>
+        </div>
+    </div>
+
+    <!-- Curriculum Data Engine & Initial Finance Major Definition -->
+    <script>
+        // The curriculum configuration provided by the user
+        const curriculumData = {
+            "major_name": "Finance",
+            "catalog_year": "2025",
+            "total_units": 120,
+            "semesters": [
+                {
+                    "term": "Semester 1",
+                    "standing": "Freshman",
+                    "recommended_units": 15,
+                    "courses": [
+                        {
+                            "code": "GE Area A2",
+                            "title": "Written Communication",
+                            "units": 3,
+                            "category": "GE",
+                            "prereqs": "None"
+                        },
+                        {
+                            "code": "Major Prep 1",
+                            "title": "Intro to Discipline",
+                            "units": 3,
+                            "category": "Major Preparation",
+                            "prereqs": "None"
+                        },
+                        {
+                            "code": "GE Area B4",
+                            "title": "Mathematics / Quant. Reasoning",
+                            "units": 3,
+                            "category": "GE",
+                            "prereqs": "None"
+                        },
+                        {
+                            "code": "GE Area C1",
+                            "title": "Arts",
+                            "units": 3,
+                            "category": "GE",
+                            "prereqs": "None"
+                        },
+                        {
+                            "code": "UNIV 150",
+                            "title": "First Year Seminar",
+                            "units": 3,
+                            "category": "Other",
+                            "prereqs": "None"
+                        }
+                    ]
+                },
+                {
+                    "term": "Semester 2",
+                    "standing": "Freshman",
+                    "recommended_units": 15,
+                    "courses": [
+                        {
+                            "code": "GE Area A1",
+                            "title": "Oral Communication",
+                            "units": 3,
+                            "category": "GE",
+                            "prereqs": "None"
+                        },
+                        {
+                            "code": "ECON 110",
+                            "title": "Principles of Microeconomics",
+                            "units": 3,
+                            "category": "Major Preparation",
+                            "prereqs": "None"
+                        },
+                        {
+                            "code": "GE Area A3",
+                            "title": "Critical Thinking",
+                            "units": 3,
+                            "category": "GE",
+                            "prereqs": "GE Area A2"
+                        },
+                        {
+                            "code": "GE Area B1",
+                            "title": "Physical Science",
+                            "units": 3,
+                            "category": "GE",
+                            "prereqs": "None"
+                        },
+                        {
+                            "code": "GE Area C2",
+                            "title": "Humanities",
+                            "units": 3,
+                            "category": "GE",
+                            "prereqs": "None"
+                        }
+                    ]
+                },
+                {
+                    "term": "Semester 3",
+                    "standing": "Sophomore",
+                    "recommended_units": 15,
+                    "courses": [
+                        {
+                            "code": "ACCT 210",
+                            "title": "Financial Accounting",
+                            "units": 3,
+                            "category": "Major Preparation",
+                            "prereqs": "None"
+                        },
+                        {
+                            "code": "ECON 111",
+                            "title": "Principles of Macroeconomics",
+                            "units": 3,
+                            "category": "Major Preparation",
+                            "prereqs": "None"
+                        },
+                        {
+                            "code": "GE Area B2",
+                            "title": "Life Science",
+                            "units": 3,
+                            "category": "GE",
+                            "prereqs": "None"
+                        },
+                        {
+                            "code": "GE Area B3",
+                            "title": "Lab Science Component",
+                            "units": 1,
+                            "category": "GE",
+                            "prereqs": "GE Area B1/B2"
+                        },
+                        {
+                            "code": "GE Area D",
+                            "title": "Social Sciences",
+                            "units": 3,
+                            "category": "GE",
+                            "prereqs": "None"
+                        },
+                        {
+                            "code": "Elective",
+                            "title": "Lower-Division Elective",
+                            "units": 2,
+                            "category": "Other",
+                            "prereqs": "None"
+                        }
+                    ]
+                },
+                {
+                    "term": "Semester 4",
+                    "standing": "Sophomore",
+                    "recommended_units": 15,
+                    "courses": [
+                        {
+                            "code": "ACCT 220",
+                            "title": "Managerial Accounting",
+                            "units": 3,
+                            "category": "Major Preparation",
+                            "prereqs": "ACCT 210"
+                        },
+                        {
+                            "code": "FIN 300",
+                            "title": "Business Finance",
+                            "units": 3,
+                            "category": "Major Core",
+                            "prereqs": "ACCT 210, MATH 140"
+                        },
+                        {
+                            "code": "MGT 307",
+                            "title": "Organizational Behavior",
+                            "units": 3,
+                            "category": "Major Core",
+                            "prereqs": "None"
+                        },
+                        {
+                            "code": "GE Area F",
+                            "title": "Ethnic Studies",
+                            "units": 3,
+                            "category": "GE",
+                            "prereqs": "None"
+                        },
+                        {
+                            "code": "US Constitution",
+                            "title": "US History & Institutions",
+                            "units": 3,
+                            "category": "Other",
+                            "prereqs": "None"
+                        }
+                    ]
+                },
+                {
+                    "term": "Semester 5",
+                    "standing": "Junior",
+                    "recommended_units": 15,
+                    "courses": [
+                        {
+                            "code": "FIN 320",
+                            "title": "Financial Markets & Inst.",
+                            "units": 3,
+                            "category": "Major Core",
+                            "prereqs": "FIN 300"
+                        },
+                        {
+                            "code": "FIN 340",
+                            "title": "Investments",
+                            "units": 3,
+                            "category": "Major Core",
+                            "prereqs": "FIN 300"
+                        },
+                        {
+                            "code": "MKT 310",
+                            "title": "Principles of Marketing",
+                            "units": 3,
+                            "category": "Major Core",
+                            "prereqs": "None"
+                        },
+                        {
+                            "code": "UD GE Area C",
+                            "title": "Upper-Division Arts/Hum",
+                            "units": 3,
+                            "category": "GE",
+                            "prereqs": "Junior Standing"
+                        },
+                        {
+                            "code": "Elective",
+                            "title": "General Elective",
+                            "units": 3,
+                            "category": "Other",
+                            "prereqs": "None"
+                        }
+                    ]
+                },
+                {
+                    "term": "Semester 6",
+                    "standing": "Junior",
+                    "recommended_units": 15,
+                    "courses": [
+                        {
+                            "code": "FIN 360",
+                            "title": "Financial Analysis & Val.",
+                            "units": 3,
+                            "category": "Major Core",
+                            "prereqs": "FIN 300"
+                        },
+                        {
+                            "code": "BUS 320",
+                            "title": "Operations Management",
+                            "units": 3,
+                            "category": "Major Core",
+                            "prereqs": "None"
+                        },
+                        {
+                            "code": "UD GE Area D",
+                            "title": "Upper-Division Social Sci.",
+                            "units": 3,
+                            "category": "GE",
+                            "prereqs": "Junior Standing"
+                        },
+                        {
+                            "code": "Option Course 1",
+                            "title": "Corporate Finance Elective",
+                            "units": 3,
+                            "category": "Option",
+                            "prereqs": "FIN 300"
+                        },
+                        {
+                            "code": "Elective",
+                            "title": "General Elective",
+                            "units": 3,
+                            "category": "Other",
+                            "prereqs": "None"
+                        }
+                    ]
+                },
+                {
+                    "term": "Semester 7",
+                    "standing": "Senior",
+                    "recommended_units": 15,
+                    "courses": [
+                        {
+                            "code": "FIN 410",
+                            "title": "Derivative Securities",
+                            "units": 3,
+                            "category": "Option",
+                            "prereqs": "FIN 340"
+                        },
+                        {
+                            "code": "FIN 420",
+                            "title": "International Finance",
+                            "units": 3,
+                            "category": "Major Core",
+                            "prereqs": "FIN 300"
+                        },
+                        {
+                            "code": "Option Course 2",
+                            "title": "Advanced Finance Elective",
+                            "units": 3,
+                            "category": "Option",
+                            "prereqs": "FIN 320"
+                        },
+                        {
+                            "code": "UD GE Area B",
+                            "title": "Upper-Division Science/Math",
+                            "units": 3,
+                            "category": "GE",
+                            "prereqs": "Junior Standing"
+                        },
+                        {
+                            "code": "Elective",
+                            "title": "Upper-Division Elective",
+                            "units": 3,
+                            "category": "Other",
+                            "prereqs": "None"
+                        }
+                    ]
+                },
+                {
+                    "term": "Semester 8",
+                    "standing": "Senior",
+                    "recommended_units": 15,
+                    "courses": [
+                        {
+                            "code": "BUS 499",
+                            "title": "Business Capstone",
+                            "units": 3,
+                            "category": "Major Core",
+                            "prereqs": "Senior Standing"
+                        },
+                        {
+                            "code": "Option Course 3",
+                            "title": "Portfolio Management",
+                            "units": 3,
+                            "category": "Option",
+                            "prereqs": "FIN 340"
+                        },
+                        {
+                            "code": "Elective",
+                            "title": "Upper-Division Elective",
+                            "units": 3,
+                            "category": "Other",
+                            "prereqs": "None"
+                        },
+                        {
+                            "code": "Elective",
+                            "title": "General Elective",
+                            "units": 3,
+                            "category": "Other",
+                            "prereqs": "None"
+                        },
+                        {
+                            "code": "Elective",
+                            "title": "General Elective",
+                            "units": 3,
+                            "category": "Other",
+                            "prereqs": "None"
+                        }
+                    ]
+                }
+            ],
+            "notes": [
+                "Major courses require a grade of C or better.",
+                "Students should meet with an advisor each semester."
+            ],
+            "checklist": {
+                "major_prep": ["ACCT 210", "ACCT 220", "ECON 110", "ECON 111"],
+                "major_core": ["FIN 300", "FIN 320", "FIN 340", "FIN 360", "FIN 420", "BUS 320", "MGT 307", "MKT 310", "BUS 499"],
+                "upper_division_ge": ["UD GE Area B", "UD GE Area C", "UD GE Area D"],
+                "other_requirements": ["Capstone Project", "120 Total Units", "40 Upper-Division Units"]
+            }
+        };
+
+        // Render curriculum data dynamically to the HTML structure
+        function renderCurriculum(data) {
+            // Set Headers
+            document.getElementById('doc-major-name').textContent = `${data.major_name} Curriculum Roadmap`;
+            document.getElementById('doc-catalog-year').textContent = data.catalog_year;
+            document.getElementById('doc-total-units').textContent = data.total_units;
+
+            // Render Semesters
+            const semestersContainer = document.getElementById('semesters-container');
+            semestersContainer.innerHTML = '';
+
+            data.semesters.forEach(sem => {
+                const column = document.createElement('div');
+                column.className = 'semester-column';
+
+                // Semester Header
+                const headerRow = document.createElement('div');
+                headerRow.className = 'sem-title-row';
+                
+                const title = document.createElement('div');
+                title.className = 'sem-title';
+                title.textContent = sem.term;
+                
+                const units = document.createElement('span');
+                units.className = 'unit-count';
+                units.textContent = `${sem.recommended_units} Units`;
+
+                headerRow.appendChild(title);
+                headerRow.appendChild(units);
+                column.appendChild(headerRow);
+
+                // Render Courses
+                sem.courses.forEach(course => {
+                    const box = document.createElement('div');
+                    
+                    // Categorize box color based on rules
+                    let catClass = 'color-other';
+                    const cat = course.category.toLowerCase();
+                    if (cat === 'ge') {
+                        catClass = 'color-ge';
+                    } else if (cat.includes('preparation') || cat.includes('prep')) {
+                        catClass = 'color-prep';
+                    } else if (cat.includes('core')) {
+                        catClass = 'color-core';
+                    } else if (cat.includes('option') || cat.includes('concentration')) {
+                        catClass = 'color-option';
+                    }
+
+                    box.className = `course-box ${catClass}`;
+
+                    const courseTitle = document.createElement('div');
+                    courseTitle.className = 'course-title';
+                    courseTitle.textContent = course.title;
+                    box.appendChild(courseTitle);
+
+                    const meta = document.createElement('div');
+                    meta.className = 'course-meta';
+                    
+                    const code = document.createElement('span');
+                    code.className = 'course-code';
+                    code.textContent = course.code;
+                    meta.appendChild(code);
+
+                    const unitSpan = document.createElement('span');
+                    unitSpan.className = 'course-units';
+                    unitSpan.textContent = `${course.units}.0 units`;
+                    meta.appendChild(unitSpan);
+                    box.appendChild(meta);
+
+                    if (course.prereqs && course.prereqs.toLowerCase() !== 'none') {
+                        const prereq = document.createElement('div');
+                        prereq.className = 'prereq-label';
+                        prereq.textContent = `Prereq: ${course.prereqs}`;
+                        box.appendChild(prereq);
+                    }
+
+                    column.appendChild(box);
+                });
+
+                semestersContainer.appendChild(column);
+            });
+
+            // Render Checklist
+            const checklistContainer = document.getElementById('checklist-container');
+            checklistContainer.innerHTML = '';
+
+            const sections = [
+                { key: 'major_prep', title: 'Major Preparation' },
+                { key: 'major_core', title: 'Major Core' },
+                { key: 'upper_division_ge', title: 'Upper-Division GE' },
+                { key: 'other_requirements', title: 'Other Requirements' }
+            ];
+
+            sections.forEach(sec => {
+                if (data.checklist[sec.key] && data.checklist[sec.key].length > 0) {
+                    const group = document.createElement('div');
+                    group.className = 'checklist-group';
+
+                    const groupTitle = document.createElement('div');
+                    groupTitle.className = 'checklist-group-title';
+                    groupTitle.textContent = sec.title;
+                    group.appendChild(groupTitle);
+
+                    data.checklist[sec.key].forEach(item => {
+                        const row = document.createElement('div');
+                        row.className = 'checklist-item';
+
+                        const checkbox = document.createElement('input');
+                        checkbox.type = 'checkbox';
+                        row.appendChild(checkbox);
+
+                        const label = document.createElement('span');
+                        label.textContent = item;
+                        row.appendChild(label);
+
+                        group.appendChild(row);
+                    });
+
+                    checklistContainer.appendChild(group);
+                }
+            });
+
+            // Render Notes
+            const notesContainer = document.getElementById('notes-container');
+            notesContainer.innerHTML = '';
+
+            data.notes.forEach(note => {
+                const li = document.createElement('li');
+                li.textContent = note;
+                notesContainer.appendChild(li);
+            });
+        }
+
+        // Check if there is custom curriculum data generated by the LLM
+        const customCurriculum = localStorage.getItem('csuci_custom_flowchart');
+        if (customCurriculum) {
+            try {
+                const parsed = JSON.parse(customCurriculum);
+                renderCurriculum(parsed);
+            } catch (e) {
+                console.error("Failed to parse custom curriculum data from localStorage:", e);
+                renderCurriculum(curriculumData);
+            }
+        } else {
+            renderCurriculum(curriculumData);
+        }
+    </script>
+</body>
+</html>
