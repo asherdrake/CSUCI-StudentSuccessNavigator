@@ -1,12 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { API_URL, WELCOME_MESSAGE } from '../config';
 
 /**
  * Chat state + backend API orchestration.
  *
- * Owns messages, client-managed LLM history, session id, input text, and
- * the interactive-ticket state that lives on escalation messages. Backend
- * responses follow the type-discriminated contract:
+ * Owns messages, client-managed LLM history, session id, input text,
+ * language preference, the word-by-word reveal of bot replies, and the
+ * interactive-ticket state on escalation messages. Backend responses follow
+ * the type-discriminated contract:
  *   { type, message, citations?, escalation?, sessionId }
  */
 export function useChat() {
@@ -14,9 +15,44 @@ export function useChat() {
   const [history, setHistory] = useState([]);
   const [sessionId, setSessionId] = useState(null);
   const [input, setInput] = useState('');
+  const [language, setLanguage] = useState('en');
   const [loading, setLoading] = useState(false);
 
+  // Simulated streaming: the response arrives complete, then reveals
+  // word-by-word for a live typing feel.
+  const streamIntervalRef = useRef(null);
+
+  const stopStreaming = () => {
+    if (streamIntervalRef.current) {
+      clearInterval(streamIntervalRef.current);
+      streamIntervalRef.current = null;
+    }
+  };
+
+  useEffect(() => stopStreaming, []); // clear on unmount
+
+  const streamBotMessage = (msgId, fullText) => {
+    stopStreaming();
+    const words = fullText.split(' ');
+    let wordIndex = 0;
+    let revealed = '';
+
+    streamIntervalRef.current = setInterval(() => {
+      if (wordIndex < words.length) {
+        revealed += (wordIndex === 0 ? '' : ' ') + words[wordIndex];
+        wordIndex++;
+        const content = revealed;
+        setMessages((prev) =>
+          prev.map((msg) => (msg.id === msgId ? { ...msg, content } : msg))
+        );
+      } else {
+        stopStreaming();
+      }
+    }, 25); // Fast, premium-feeling 25ms delay per word
+  };
+
   const reset = () => {
+    stopStreaming();
     setMessages([WELCOME_MESSAGE]);
     setHistory([]);
     setSessionId(null);
@@ -49,7 +85,8 @@ export function useChat() {
         body: JSON.stringify({
           message: userQuery,
           history: history,
-          sessionId: sessionId
+          sessionId: sessionId,
+          language: language
         })
       });
 
@@ -63,25 +100,29 @@ export function useChat() {
         setSessionId(data.sessionId);
       }
 
+      const botMsgId = (Date.now() + 1).toString();
+      const fullMessage = data.message || '';
+
       setMessages((prev) => [
         ...prev,
         {
-          id: (Date.now() + 1).toString(),
+          id: botMsgId,
           role: 'bot',
           type: data.type,
-          content: data.message || '',
+          content: '', // revealed word-by-word below
           citations: data.citations || [],
           escalation: data.escalation || null
         }
       ]);
+      streamBotMessage(botMsgId, fullMessage);
 
       // Only real answers and clarifying questions carry dialogue value for
       // the LLM's next turn; canned escalate/decline messages do not.
-      if ((data.type === 'answer' || data.type === 'clarify') && data.message) {
+      if ((data.type === 'answer' || data.type === 'clarify') && fullMessage) {
         setHistory((prev) => [
           ...prev,
           { role: 'user', content: userQuery },
-          { role: 'assistant', content: data.message }
+          { role: 'assistant', content: fullMessage }
         ]);
       }
     } catch (err) {
@@ -126,6 +167,8 @@ export function useChat() {
     messages,
     input,
     setInput,
+    language,
+    setLanguage,
     loading,
     isChatActive,
     submit,

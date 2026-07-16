@@ -10,7 +10,9 @@ export default function ChatThread({
   setInput,
   onSubmit,
   onCreateTicket,
-  onDismissTicket
+  onDismissTicket,
+  language,
+  onLanguageChange
 }) {
   const chatEndRef = useRef(null);
 
@@ -54,6 +56,8 @@ export default function ChatThread({
           onSubmit={onSubmit}
           placeholder="Ask a follow-up question..."
           disabled={loading}
+          language={language}
+          onLanguageChange={onLanguageChange}
         />
       </div>
     </div>

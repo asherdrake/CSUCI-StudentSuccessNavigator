@@ -46,6 +46,18 @@ passwords, or other sensitive personal information.
 {retrieved_chunks}\
 """
 
+# Appended to the system prompt when the student explicitly selects Spanish
+# in the UI. Overrides the auto-detect rule (#3): an explicit choice wins.
+SPANISH_OVERRIDE: str = """\
+
+
+## Language override
+
+The student has explicitly selected Spanish in the interface. Write ALL \
+student-facing text (the answer or the clarifying question) entirely in \
+Spanish, regardless of the language the message was written in.\
+"""
+
 # ---------------------------------------------------------------------------
 # Code-owned student-facing templates (the model never writes these)
 # ---------------------------------------------------------------------------

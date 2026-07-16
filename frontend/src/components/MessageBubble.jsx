@@ -1,11 +1,11 @@
-import { parseCitationMarkers } from '../utils/citations';
+import { renderMarkdown } from '../utils/markdown';
 import EscalationCard from './EscalationCard';
 
 export default function MessageBubble({ msg, onCreateTicket, onDismissTicket }) {
   return (
     <div className={`chat-bubble-row ${msg.role}`}>
       <div className="chat-text-bubble">
-        <div>{parseCitationMarkers(msg.content, msg.citations)}</div>
+        <div>{renderMarkdown(msg.content, msg.citations)}</div>
 
         {/* Source list (deduped, resolved server-side from passage numbers) */}
         {msg.citations && msg.citations.length > 0 && (

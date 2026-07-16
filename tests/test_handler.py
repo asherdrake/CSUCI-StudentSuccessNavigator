@@ -277,6 +277,70 @@ class TestEscalatePath:
 
 
 # ---------------------------------------------------------------------------
+# Language preference (explicit UI selection)
+# ---------------------------------------------------------------------------
+
+
+@patch("handler.translate_query_to_english")
+@patch("handler.invoke_model")
+@patch("handler.retrieve_context")
+@patch("handler.check_message")
+class TestLanguagePreference:
+    def _event_with_language(self, language):
+        return {
+            "httpMethod": "POST",
+            "body": json.dumps(
+                {"message": "¿Dónde está la biblioteca?", "language": language}
+            ),
+        }
+
+    def test_spanish_translates_query_for_retrieval(
+        self, mock_check, mock_retrieve, mock_invoke, mock_translate
+    ):
+        mock_check.return_value = SAFE
+        mock_retrieve.return_value = CHUNKS
+        mock_translate.return_value = "Where is the library?"
+        mock_invoke.return_value = [
+            _answer_call(answer="La biblioteca está en Broome [1].", citations=[1])
+        ]
+
+        body = _body(lambda_handler(self._event_with_language("es"), None))
+
+        assert body["type"] == "answer"
+        assert "biblioteca" in body["message"]
+        mock_translate.assert_called_once_with("¿Dónde está la biblioteca?")
+        # Retrieval must use the TRANSLATED query (the KB is English).
+        mock_retrieve.assert_called_once_with("Where is the library?", top_k=5)
+
+    def test_spanish_appends_language_override_to_system_prompt(
+        self, mock_check, mock_retrieve, mock_invoke, mock_translate
+    ):
+        mock_check.return_value = SAFE
+        mock_retrieve.return_value = CHUNKS
+        mock_translate.return_value = "Where is the library?"
+        mock_invoke.return_value = [_answer_call()]
+
+        lambda_handler(self._event_with_language("es"), None)
+
+        system_prompt = mock_invoke.call_args.kwargs["system_prompt"]
+        assert "Language override" in system_prompt
+        assert "Spanish" in system_prompt
+
+    def test_english_default_skips_translation_and_override(
+        self, mock_check, mock_retrieve, mock_invoke, mock_translate
+    ):
+        mock_check.return_value = SAFE
+        mock_retrieve.return_value = CHUNKS
+        mock_invoke.return_value = [_answer_call()]
+
+        lambda_handler(_event("Where is the library?"), None)
+
+        mock_translate.assert_not_called()
+        system_prompt = mock_invoke.call_args.kwargs["system_prompt"]
+        assert "Language override" not in system_prompt
+
+
+# ---------------------------------------------------------------------------
 # Decline path
 # ---------------------------------------------------------------------------
 

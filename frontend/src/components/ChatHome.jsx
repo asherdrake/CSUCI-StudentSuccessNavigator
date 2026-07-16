@@ -1,7 +1,7 @@
 import ChatInput from './ChatInput';
 
 /** Landing view shown before the first user message. */
-export default function ChatHome({ input, setInput, loading, onSubmit }) {
+export default function ChatHome({ input, setInput, loading, onSubmit, language, onLanguageChange }) {
   return (
     <div className="gemini-home-container">
       <div className="gemini-content-wrapper">
@@ -16,6 +16,8 @@ export default function ChatHome({ input, setInput, loading, onSubmit }) {
           onSubmit={onSubmit}
           placeholder="Ask the Success Navigator..."
           disabled={loading}
+          language={language}
+          onLanguageChange={onLanguageChange}
         />
       </div>
     </div>

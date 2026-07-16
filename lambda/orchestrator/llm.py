@@ -146,6 +146,35 @@ def invoke_model(
     return extract_tool_calls(response)
 
 
+def translate_query_to_english(query: str) -> str:
+    """Translate a student query to English to optimize vector search.
+
+    The knowledge base is English, so non-English queries embed poorly. This
+    is a plain Converse call (no tools, small budget); on ANY failure it
+    falls back to the original query — retrieval degrades, nothing breaks.
+    """
+    system_prompt = (
+        "You are a translation helper. Translate the user's message into "
+        "plain English. If it is already in English, return it exactly as "
+        "is. Output ONLY the final English translation text, with no "
+        "introduction, no surrounding quotes, and no extra notes."
+    )
+    try:
+        response = _get_client().converse(
+            modelId=_get_model_id(),
+            system=[{"text": system_prompt}],
+            messages=[{"role": "user", "content": [{"text": query}]}],
+            inferenceConfig={"maxTokens": 128},
+        )
+        blocks = response.get("output", {}).get("message", {}).get("content", [])
+        translation = "".join(b.get("text", "") for b in blocks if "text" in b)
+        translation = translation.strip().strip('"').strip("'")
+        return translation or query
+    except Exception:
+        logger.warning("Query translation failed, falling back to original text.")
+        return query
+
+
 # ---------------------------------------------------------------------------
 # Structural validation
 # ---------------------------------------------------------------------------

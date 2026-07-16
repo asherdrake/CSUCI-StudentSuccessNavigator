@@ -28,6 +28,9 @@ function App() {
       <FloatingBubble hidden={isOpen} pos={bubble.pos} handlers={bubble.handlers} />
 
       <div className={`main-dashboard ${isOpen ? 'open' : 'closed'}`} style={dynamicOriginStyle}>
+        {/* Customizable Background Sticker Layer */}
+        <div className="chatbot-sticker-bg" />
+
         <button className="close-dashboard-btn" onClick={handleClose}>
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
             <path d="M18 6L6 18M6 6l12 12" />
@@ -40,6 +43,8 @@ function App() {
             setInput={chat.setInput}
             loading={chat.loading}
             onSubmit={chat.submit}
+            language={chat.language}
+            onLanguageChange={chat.setLanguage}
           />
         ) : (
           <ChatThread
@@ -50,6 +55,8 @@ function App() {
             onSubmit={chat.submit}
             onCreateTicket={chat.createTicket}
             onDismissTicket={chat.dismissTicket}
+            language={chat.language}
+            onLanguageChange={chat.setLanguage}
           />
         )}
       </div>

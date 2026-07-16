@@ -1,20 +1,21 @@
 # CSUCI Student Success Navigator
 
-An AI-powered chatbot that helps California State University Channel Islands (CSUCI) students get instant, accurate answers to questions about registration, advising, financial aid, graduation, and campus support services.
+An AI-powered assistant designed to help California State University Channel Islands (CSUCI) students, families, and prospective students find accurate campus answers regarding registration, advising, financial aid, tutoring, and campus locations.
 
-Built on **Amazon Bedrock** (Claude Sonnet 5 + Knowledge Bases) with a fully serverless AWS backend and a React frontend. On every turn the model makes a **structured decision** via Converse tool-use — answer, ask a clarifying question, escalate to a specific campus office, or decline — instead of emitting text that code has to parse.
+Built with a **React Vite frontend** and a serverless **Python AWS backend** on **Amazon Bedrock** (Claude Sonnet 5 + Knowledge Bases). On every turn the model makes a **structured decision** via Converse tool-use — answer, ask a clarifying question, escalate to a specific campus office, or decline — instead of emitting text that code has to parse.
 
 ---
 
-## Architecture
+## System Architecture
 
 ```mermaid
-flowchart LR
-    Student([Student]) -->|message + history| APIGW[API Gateway]
+flowchart TD
+    Student([Student React UI]) -->|message, history, language| APIGW[API Gateway / Local Dev Server]
     APIGW --> Lambda[Lambda Orchestrator]
-    Lambda --> Safety[Safety Filter]
-    Safety -->|crisis| Lambda
-    Safety -->|safe| KB[Bedrock Knowledge Base]
+    Lambda --> Safety[safety_filter.py]
+    Safety -->|crisis| Helpline[Immediate Crisis Handoff]
+    Safety -->|safe| Translate[llm.py: Spanish query translation]
+    Translate -->|English search query| KB[Bedrock Knowledge Base]
     KB -->|numbered passages| Lambda
     Lambda -->|toolConfig| Claude[Claude Sonnet 5<br/>tool-use decision]
     Claude -->|answer / clarify / escalate / decline| Lambda
@@ -26,10 +27,11 @@ flowchart LR
 
 | Component | Purpose |
 |---|---|
-| **API Gateway** | HTTPS endpoint with CORS; routes `POST /chat` to Lambda |
-| **Lambda Orchestrator** | Safety check → retrieval → tool-use decision → typed response |
+| **React Frontend** | Responsive chat UI: streaming replies, markdown rendering, language selector, interactive support-ticket generation |
+| **Lambda Orchestrator** | Safety check → (Spanish) query translation → retrieval → tool-use decision → typed response |
 | **Safety Filter** | Deterministic crisis detection (pre-LLM) + human-request backstop |
-| **Bedrock Knowledge Base** | RAG retrieval over CSUCI catalog & policy documents |
+| **RAG Translation** | Pre-translates Spanish-mode questions to English before querying the vector base, for maximum match quality |
+| **Bedrock Knowledge Base** | Vector storage over scraped CSUCI websites, roadmaps, and catalogs |
 | **Claude Sonnet 5** | Picks one of four tools (or answer+escalate pair); cites passages by number |
 | **Office directory** (`router.py`) | Phone book: contact cards + staff tickets for the office the model picks |
 
@@ -37,66 +39,62 @@ Conversation history is client-managed (passed in each request); nothing is stor
 
 ---
 
-## Prerequisites
+## Key Features
 
-| Tool | Version |
-|---|---|
-| AWS Account | With Amazon Bedrock model access enabled |
-| AWS SAM CLI | ≥ 1.100 |
-| Python | 3.12 |
-| Node.js | ≥ 18 (for the React frontend) |
-| Docker | Optional, for `sam build --use-container` |
+*   **Structured tool-use decisions**: The model must call one of four tools (`answer_from_context`, `ask_clarification`, `escalate_to_office`, `decline_out_of_scope`) — no sentinel-string parsing. One pair is allowed: answer + escalate, for messages that are both answerable and need a human.
+*   **Grounded citations**: Answers cite passages by number (`[1]`); the backend resolves numbers to trusted URLs from retrieved chunks. The model never writes a URL. Ungrounded answers fail safe to a human handoff.
+*   **Interactive Ticket Generation**: Escalations display direct contact details for the specialized office and offer buttons to generate a support ticket with a unique tracking ID (`#CSUCI-XXXXXX`) and a staff-facing summary written by the model.
+*   **Cross-Lingual Support**: Selecting 🇪🇸 ES pre-translates the search query to English (the KB is English) and forces fully-Spanish replies. In 🇺🇸 EN mode the assistant simply replies in whatever language the student writes.
+*   **Streaming replies**: Responses reveal word-by-word for a live typing feel, with full markdown rendering (headings, bold, lists, citation links).
 
 ---
 
-## Setup
+## Local Development Setup
 
-### 1. Clone the repository
+Run the backend Python server and the React frontend concurrently.
+
+### 1. Configure the Environment
+Copy `.env.example` to `.env` in the project root and fill in your values:
+```env
+# Bedrock Knowledge Base ID
+BEDROCK_KB_ID=XEAFKVXLTI
+
+# Bedrock model identifier (tool-use-capable inference profile)
+MODEL_ID=us.anthropic.claude-sonnet-5
+
+# AWS region
+AWS_REGION=us-west-2
+```
+AWS credentials come from your configured profile / SSO session (`aws sso login`).
+> **Security Note:** Never commit your `.env` file to git. It is automatically blocked by `.gitignore`.
+
+### 2. Start the Backend Dev Server
+Open a terminal in the project root folder:
+```bash
+# Start the local API server (runs on http://localhost:8000)
+python scratch/dev_server.py
+```
+
+### 3. Start the Frontend Dev Server
+Open a **new terminal window** in the project root folder:
+```bash
+cd frontend
+npm install     # if not done already
+npm run dev     # runs on http://localhost:5173
+```
+Open your browser to [http://localhost:5173](http://localhost:5173) to interact with the bot!
+
+---
+
+## Run Unit Tests
+
+The backend test suite covers safety keywords, Converse tool-call parsing and validation, dispatch policy, the response contract, fail-safe behavior, and language preferences.
 
 ```bash
-git clone <repo-url>
-cd "CSUCI Student Success Navigation"
-```
-
-### 2. Configure environment
-
-```bash
-cp .env.example .env
-# Edit .env and fill in:
-#   BEDROCK_KB_ID  — your Knowledge Base ID
-#   AWS_REGION     — e.g. us-west-2
-```
-
-### 3. Deploy the backend
-
-```bash
-cd infra
-sam build
-sam deploy --guided
-# Follow the prompts — provide your BedrockKBId when asked.
-```
-
-> **Tip:** After the first guided deploy the settings are saved in `samconfig.toml`. Future deploys only need `sam deploy`.
-
-### 4. Note the outputs
-
-After deployment, SAM prints:
-
-```
-Outputs:
-  ApiEndpointUrl   = https://xxxxxxxxxx.execute-api.us-west-2.amazonaws.com/prod/chat
-  SessionTableName = student-navigator-sessions-dev
-  OrchestratorFunctionArn = arn:aws:lambda:...
-```
-
-Use the `ApiEndpointUrl` in your frontend `.env` file.
-
-### 5. Run the tests
-
-```bash
-pip install -r requirements-dev.txt   # pytest, moto, boto3, etc.
 pytest tests/ -v
 ```
+
+There is also a **live eval** (needs AWS credentials): `python eval/run_eval.py` runs the golden set through the real stack and prints outcome/routing accuracy plus a confusion matrix. Compare against `eval/baseline_results.json` before merging prompt or tool-description changes.
 
 ---
 
@@ -109,7 +107,8 @@ pytest tests/ -v
 {
   "message": "How do I register for classes?",
   "history": [],
-  "sessionId": "optional-uuid"
+  "sessionId": "optional-uuid",
+  "language": "en"
 }
 ```
 
@@ -135,15 +134,13 @@ For the full schema, error codes, and curl examples see **[docs/api_reference.md
 CSUCI Student Success Navigation/
 ├── README.md                  ← you are here
 ├── .env.example
-├── infra/
-│   ├── template.yaml          ← AWS SAM / CloudFormation template
-│   └── samconfig.toml         ← SAM CLI deployment defaults
+├── requirements.txt           ← Backend dependencies
 ├── lambda/
 │   ├── orchestrator/
 │   │   ├── handler.py         ← Lambda entry point: dispatch + policy
 │   │   ├── tools.py           ← the four Converse tools (routing rules live here)
 │   │   ├── prompts.py         ← thin system prompt + code-owned templates
-│   │   ├── llm.py             ← Converse tool-use wrapper (the only Bedrock seam)
+│   │   ├── llm.py             ← Converse tool-use wrapper + query translation
 │   │   ├── retriever.py       ← Bedrock Knowledge Base retrieval
 │   │   └── router.py          ← office phone book + ticket assembly
 │   └── safety_filter.py       ← crisis & human-request detection
@@ -155,10 +152,16 @@ CSUCI Student Success Navigation/
 │   ├── test_safety_filter.py
 │   ├── test_retriever.py
 │   ├── test_llm.py            ← Converse parsing + decision validation
-│   ├── test_handler.py        ← dispatch, contract, fail-safe policy
+│   ├── test_handler.py        ← dispatch, contract, fail-safe, language
 │   └── fixtures/
 │       └── sample_queries.json
-├── frontend/                  ← React app (separate README)
+├── frontend/                  ← Vite React frontend application
+│   ├── src/
+│   │   ├── App.jsx            ← thin composition root
+│   │   ├── components/        ← ChatThread, MessageBubble, EscalationCard, ...
+│   │   ├── hooks/             ← useChat (state + API + streaming), useDraggable
+│   │   └── utils/markdown.jsx ← markdown + [N] citation rendering
+│   └── package.json
 └── docs/
     ├── api_reference.md
     ├── architecture.md
@@ -167,21 +170,6 @@ CSUCI Student Success Navigation/
 
 ---
 
-## Contributing
+## Team & License
 
-1. Create a feature branch from `main`.
-2. Write tests for new behaviour.
-3. Ensure `pytest tests/ -v` passes.
-4. Open a pull request.
-
----
-
-## Team
-
-> _Add team member names and roles here._
-
----
-
-## License
-
-This project is developed for CSUCI coursework. See `LICENSE` for details.
+*   **License**: Developed for CSUCI coursework. See `LICENSE` for details.

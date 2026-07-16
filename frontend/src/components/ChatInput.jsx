@@ -1,6 +1,36 @@
-export default function ChatInput({ value, onChange, onSubmit, placeholder, disabled }) {
+export default function ChatInput({
+  value,
+  onChange,
+  onSubmit,
+  placeholder,
+  disabled,
+  language,
+  onLanguageChange
+}) {
   return (
     <form onSubmit={onSubmit} className="gemini-pill-input-box">
+      {onLanguageChange && (
+        <select
+          value={language}
+          onChange={(e) => onLanguageChange(e.target.value)}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: 'var(--csuci-dark)',
+            fontSize: '13px',
+            padding: '0 8px',
+            marginRight: '8px',
+            borderRight: '1px solid var(--csuci-border)',
+            outline: 'none',
+            cursor: 'pointer',
+            fontWeight: 'bold',
+            fontFamily: 'inherit'
+          }}
+        >
+          <option value="en">🇺🇸 EN</option>
+          <option value="es">🇪🇸 ES</option>
+        </select>
+      )}
       <input
         type="text"
         value={value}

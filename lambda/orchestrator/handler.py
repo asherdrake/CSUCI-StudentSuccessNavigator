@@ -31,11 +31,13 @@ from prompts import (  # noqa: E402
     DECLINE_MESSAGE,
     ESCALATION_ADDENDUM,
     ESCALATION_MESSAGE,
+    SPANISH_OVERRIDE,
     SYSTEM_PROMPT_TEMPLATE,
 )
 from llm import (  # noqa: E402
     format_messages_for_converse,
     invoke_model,
+    translate_query_to_english,
     validate_decision,
 )
 from router import DEFAULT_OFFICE_KEY, build_escalation  # noqa: E402
@@ -173,6 +175,10 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
     history: List[dict] = body.get("history", [])
     session_id: str = body.get("sessionId") or str(uuid.uuid4())
+    # Explicit UI language selection. "es" forces Spanish replies and
+    # translates the query for retrieval; "en" (default) leaves the prompt's
+    # auto-detect rule in charge, so any-language questions still work.
+    language_code = body.get("language", "en")
 
     def respond(
         rtype: str,
@@ -215,7 +221,16 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     user_requested_human = safety_result["escalation"]["needed"]
 
     # --- 3. RAG Retrieval (always — no score-floor short-circuit) ---
-    retrieved_chunks = retrieve_context(message, top_k=5)
+    # The KB is English: translate Spanish-mode queries before vector search.
+    if language_code == "es":
+        search_query = translate_query_to_english(message)
+        logger.info(
+            "Original query: '%s' -> Search query: '%s'", message, search_query
+        )
+    else:
+        search_query = message
+
+    retrieved_chunks = retrieve_context(search_query, top_k=5)
     top_score = retrieved_chunks[0]["score"] if retrieved_chunks else 0.0
 
     if debug_chunks:
@@ -233,6 +248,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         retrieved_chunks=_format_retrieved_chunks(retrieved_chunks)
     )
+    if language_code == "es":
+        system_prompt += SPANISH_OVERRIDE
     converse_messages = format_messages_for_converse(history, message)
 
     try:
