@@ -50,9 +50,7 @@ contradiction: say the sources differ, give what each says with its passage \
 citation, and recommend confirming with the relevant office.
 - Prefer the most current passage. If only a dated source exists and timeliness \
 matters, answer but note it may be out of date.
-- Format sequential instructions as a numbered list.
-- End with 2-3 related questions the student might find helpful, as a bullet \
-list under a "**You might also want to know:**" heading.\
+- Format sequential instructions as a numbered list.\
 """
 
 _CLARIFY_DESCRIPTION = """\
