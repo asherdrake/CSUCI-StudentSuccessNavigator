@@ -46,6 +46,7 @@ Conversation history is client-managed (passed in each request); nothing is stor
 *   **Interactive Ticket Generation**: Escalations display direct contact details for the specialized office and offer buttons to generate a support ticket with a unique tracking ID (`#CSUCI-XXXXXX`) and a staff-facing summary written by the model.
 *   **Cross-Lingual Support**: Selecting 🇪🇸 ES pre-translates the search query to English (the KB is English) and forces fully-Spanish replies. In 🇺🇸 EN mode the assistant simply replies in whatever language the student writes.
 *   **Streaming replies**: Responses reveal word-by-word for a live typing feel, with full markdown rendering (headings, bold, lists, citation links).
+*   **Animated Mascot Engine**: Renders a frame-by-frame procedural pixel-art dolphin mascot animation on the landing interface that reacts to interaction states.
 
 ---
 
@@ -157,10 +158,12 @@ CSUCI Student Success Navigation/
 │       └── sample_queries.json
 ├── frontend/                  ← Vite React frontend application
 │   ├── src/
-│   │   ├── App.jsx            ← thin composition root
-│   │   ├── components/        ← ChatThread, MessageBubble, EscalationCard, ...
-│   │   ├── hooks/             ← useChat (state + API + streaming), useDraggable
-│   │   └── utils/markdown.jsx ← markdown + [N] citation rendering
+│   │   ├── App.jsx            ← composition root
+│   │   ├── DolphinLoader.jsx  ← animated pixel-art dolphin mascot loader engine
+│   │   ├── components/        ← ChatHome, AppHeader, ChatInput, ChatThread, MessageBubble, EscalationCard, FloatingBubble
+│   │   ├── hooks/             ← useChat (core state + streaming API), useDraggable (window bubble dragging)
+│   │   ├── utils/markdown.jsx ← custom markdown + [N] citation link resolver
+│   │   └── config.js          ← centralized app settings & endpoint URLs
 │   └── package.json
 └── docs/
     ├── api_reference.md
