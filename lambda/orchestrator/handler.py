@@ -251,6 +251,37 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             },
         )
 
+    # --- 2a. Small-Talk Check (greetings/closings — before RAG/score-floor) ---
+    # Pure greetings ("hi") and closings ("thanks, I'm done") aren't real
+    # questions, so they always score below the KB-relevance floor (Section
+    # 4) and would otherwise get treated as "couldn't find info" or even
+    # escalated to a support ticket on a second turn. Handled here instead
+    # with a canned, friendly response, before any retrieval/Bedrock call.
+    if safety_result.get("smalltalk_response"):
+        smalltalk_answer = safety_result["smalltalk_response"]
+        _log_interaction(
+            status="smalltalk",
+            message=message,
+            answered=True,
+            safety_result=safety_result,
+            chunks_count=0,
+            top_score=0.0,
+            answer=smalltalk_answer,
+            citations=[],
+            escalation=None,
+            session_id=session_id,
+        )
+        return _build_response(
+            200,
+            {
+                "answer": smalltalk_answer,
+                "answered": True,
+                "citations": [],
+                "escalation": None,
+                "sessionId": session_id,
+            },
+        )
+
     # --- 2b. Guardrail Check on Raw Message (before RAG/score-floor) ---
     # The main Converse-call guardrail check (below, Section 6) only runs if
     # the message passes the KB-relevance score floor (Section 4) — messages
