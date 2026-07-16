@@ -132,36 +132,170 @@ function App() {
     setInput('');
   };
 
-  const parseMarkdownLinks = (text) => {
-    if (!text) return '';
-    
-    // Programmatically strip bolding (**) and heading (#) markdown syntax
-    let cleanText = text.replace(/\*\*/g, '');
-    cleanText = cleanText.replace(/#+\s+/g, '');
-    
-    const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
-    const parts = [];
-    let lastIndex = 0;
-    let match;
+  const renderMarkdown = (text) => {
+    if (!text) return null;
 
-    while ((match = linkRegex.exec(cleanText)) !== null) {
-      if (match.index > lastIndex) {
-        parts.push(cleanText.substring(lastIndex, match.index));
+    const lines = text.split('\n');
+    let inList = false;
+    let listType = null; // 'ul' or 'ol'
+    const elements = [];
+    let listItems = [];
+
+    const flushList = (key) => {
+      if (listItems.length > 0) {
+        const Tag = listType;
+        elements.push(
+          <Tag key={`list-${key}`} style={{ margin: '8px 0', paddingLeft: '20px' }}>
+            {listItems}
+          </Tag>
+        );
+        listItems = [];
+        inList = false;
+        listType = null;
       }
-      const title = match[1];
-      const url = match[2];
-      parts.push(
-        <a key={match.index} href={url} target="_blank" rel="noopener noreferrer" style={{ color: '#C51B29', textDecoration: 'underline' }}>
-          {title}
-        </a>
+    };
+
+    const parseInline = (inlineText) => {
+      let tokens = [{ type: 'text', content: inlineText }];
+
+      // Parse bold tokens
+      let nextTokens = [];
+      for (const token of tokens) {
+        if (token.type === 'text') {
+          let match;
+          let lastIdx = 0;
+          const regex = /\*\*([^*]+)\*\*/g;
+          while ((match = regex.exec(token.content)) !== null) {
+            if (match.index > lastIdx) {
+              nextTokens.push({ type: 'text', content: token.content.substring(lastIdx, match.index) });
+            }
+            nextTokens.push({ type: 'bold', content: match[1] });
+            lastIdx = regex.lastIndex;
+          }
+          if (lastIdx < token.content.length) {
+            nextTokens.push({ type: 'text', content: token.content.substring(lastIdx) });
+          }
+        } else {
+          nextTokens.push(token);
+        }
+      }
+      tokens = nextTokens;
+
+      // Parse links in tokens
+      nextTokens = [];
+      for (const token of tokens) {
+        if (token.type === 'text') {
+          let match;
+          let lastIdx = 0;
+          const regex = /\[([^\]]+)\]\(([^)]+)\)/g;
+          while ((match = regex.exec(token.content)) !== null) {
+            if (match.index > lastIdx) {
+              nextTokens.push({ type: 'text', content: token.content.substring(lastIdx, match.index) });
+            }
+            nextTokens.push({ type: 'link', text: match[1], url: match[2] });
+            lastIdx = regex.lastIndex;
+          }
+          if (lastIdx < token.content.length) {
+            nextTokens.push({ type: 'text', content: token.content.substring(lastIdx) });
+          }
+        } else {
+          nextTokens.push(token);
+        }
+      }
+      tokens = nextTokens;
+
+      // Map tokens to React elements
+      return tokens.map((token, idx) => {
+        if (token.type === 'bold') {
+          return <strong key={idx} style={{ fontWeight: 600 }}>{token.content}</strong>;
+        } else if (token.type === 'link') {
+          return (
+            <a 
+              key={idx} 
+              href={token.url} 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              style={{ color: 'var(--csuci-red)', textDecoration: 'underline', fontWeight: 500 }}
+            >
+              {token.text}
+            </a>
+          );
+        }
+        return token.content;
+      });
+    };
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      // Empty line
+      if (!trimmed) {
+        flushList(i);
+        elements.push(<div key={`br-${i}`} style={{ height: '8px' }} />);
+        continue;
+      }
+
+      // Check for headings
+      const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
+      if (headingMatch) {
+        flushList(i);
+        const level = headingMatch[1].length;
+        const headingText = headingMatch[2];
+        const HeadingTag = `h${level}`;
+        elements.push(
+          <HeadingTag key={`h-${i}`} style={{ margin: '12px 0 6px 0', fontWeight: 600, fontSize: level === 3 ? '16px' : '18px', color: 'var(--csuci-dark)' }}>
+            {parseInline(headingText)}
+          </HeadingTag>
+        );
+        continue;
+      }
+
+      // Check for bullet lists
+      const bulletMatch = line.match(/^(\*|-)\s+(.*)$/);
+      if (bulletMatch) {
+        if (inList && listType !== 'ul') {
+          flushList(i);
+        }
+        inList = true;
+        listType = 'ul';
+        listItems.push(
+          <li key={`li-${i}`} style={{ margin: '4px 0', lineHeight: '1.5' }}>
+            {parseInline(bulletMatch[2])}
+          </li>
+        );
+        continue;
+      }
+
+      // Check for numbered lists
+      const numberMatch = line.match(/^(\d+)\.\s+(.*)$/);
+      if (numberMatch) {
+        if (inList && listType !== 'ol') {
+          flushList(i);
+        }
+        inList = true;
+        listType = 'ol';
+        listItems.push(
+          <li key={`li-${i}`} style={{ margin: '4px 0', lineHeight: '1.5' }}>
+            {parseInline(numberMatch[2])}
+          </li>
+        );
+        continue;
+      }
+
+      // Regular text line
+      flushList(i);
+      elements.push(
+        <p key={`p-${i}`} style={{ margin: '6px 0', lineHeight: '1.5' }}>
+          {parseInline(line)}
+        </p>
       );
-      lastIndex = linkRegex.lastIndex;
     }
 
-    if (lastIndex < cleanText.length) {
-      parts.push(cleanText.substring(lastIndex));
-    }
-    return parts.length > 0 ? parts : cleanText;
+    // Flush remaining
+    flushList(lines.length);
+
+    return elements;
   };
 
   const handleCreateTicket = (msgId) => {
@@ -376,7 +510,7 @@ function App() {
                         User response can't be processed. Routing request...
                       </span>
                     ) : (
-                      <div>{parseMarkdownLinks(msg.content)}</div>
+                      <div>{renderMarkdown(msg.content)}</div>
                     )}
 
                     {/* Escalation Card */}
