@@ -23,12 +23,14 @@ export function useDraggable(onClick) {
   const onClickRef = useRef(onClick);
   onClickRef.current = onClick;
 
-  // Adjust coordinates if window is resized
+  // Adjust coordinates if window is resized. Lower bounds matter too: if the
+  // app mounted in a zero-sized viewport (embedded webviews), the initial
+  // position is negative and must self-heal on the first real resize.
   useEffect(() => {
     const handleResize = () => {
       setPos((prev) => ({
-        x: Math.min(prev.x, window.innerWidth - 80),
-        y: Math.min(prev.y, window.innerHeight - 80)
+        x: Math.max(10, Math.min(prev.x, window.innerWidth - 80)),
+        y: Math.max(80, Math.min(prev.y, window.innerHeight - 80))
       }));
     };
     window.addEventListener('resize', handleResize);

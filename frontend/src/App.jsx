@@ -3,6 +3,7 @@ import AppHeader from './components/AppHeader';
 import FloatingBubble from './components/FloatingBubble';
 import ChatHome from './components/ChatHome';
 import ChatThread from './components/ChatThread';
+import HomePage from './components/HomePage';
 import { useChat } from './hooks/useChat';
 import { useDraggable } from './hooks/useDraggable';
 
@@ -23,7 +24,13 @@ function App() {
 
   return (
     <div className="app-viewport">
-      <AppHeader />
+      {/* Mock CSUCI homepage rendered behind the chatbot — the Navigator
+          floats over it as a widget, like on the real university site. */}
+      <HomePage />
+
+      {/* Navigator header only while the chat panel is open; when closed,
+          the homepage masthead is the page header. */}
+      {isOpen && <AppHeader />}
 
       <FloatingBubble hidden={isOpen} pos={bubble.pos} handlers={bubble.handlers} />
 
