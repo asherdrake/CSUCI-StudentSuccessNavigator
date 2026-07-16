@@ -13,15 +13,18 @@ import sys
 import uuid
 from typing import Any, Dict, List
 
-# Make sure safety_filter and orchestrator modules are importable
-_PARENT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-if _PARENT_DIR not in sys.path:
-    sys.path.insert(0, _PARENT_DIR)
+# Make sure safety_filter (lambda/) and sibling orchestrator modules
+# (retriever, prompts, llm, router — lambda/orchestrator/) are importable
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_PARENT_DIR = os.path.join(_THIS_DIR, "..")
+for _path in (_PARENT_DIR, _THIS_DIR):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
 from safety_filter import check_message  # noqa: E402
 from retriever import retrieve_context  # noqa: E402
 from prompts import ESCALATION_TEMPLATE, SYSTEM_PROMPT_TEMPLATE  # noqa: E402
-from llm import format_messages_for_converse, invoke_model, translate_query_to_english  # noqa: E402
+from llm import check_guardrail_only, format_messages_for_converse, invoke_model, translate_query_to_english  # noqa: E402
 from router import route_query  # noqa: E402
 
 logger = logging.getLogger()
@@ -43,6 +46,24 @@ CLARIFICATION_TEXT = (
     "I'm sorry, I couldn't find enough matching information about that in our database. "
     "Could you please rephrase or provide a bit more details so I can find the right info?"
 )
+
+# Bedrock Guardrails has no native input length limit (confirmed against the
+# Converse API schema), so oversized input is rejected here before any
+# retrieval or Bedrock call is made, to save cost/latency.
+MAX_INPUT_LENGTH = 1000
+
+
+def _validate_input_length(user_message: str) -> Dict[str, Any] | None:
+    """Return an early-return response body if the message is too long, else None."""
+    if len(user_message) > MAX_INPUT_LENGTH:
+        return {
+            "answered": False,
+            "answer": (
+                "That message is a bit long — could you shorten it to a specific "
+                "question? I can help best with focused questions about CSUCI resources."
+            ),
+        }
+    return None
 
 
 def _has_already_clarified(history: List[dict]) -> bool:
@@ -188,6 +209,20 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     language_code = body.get("language", "en")
     target_language = "Spanish" if language_code == "es" else "English"
 
+    # --- 1b. Input Length Guard (before any retrieval/Bedrock calls) ---
+    length_guard_result = _validate_input_length(message)
+    if length_guard_result is not None:
+        logger.warning("Input length guard tripped (length=%d).", len(message))
+        return _build_response(
+            200,
+            {
+                **length_guard_result,
+                "citations": [],
+                "escalation": None,
+                "sessionId": session_id,
+            },
+        )
+
     # --- 2. Crisis Check (Highest Priority pre-model filter) ---
     safety_result = check_message(message)
     if safety_result["crisis"]:
@@ -215,6 +250,56 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 "sessionId": session_id,
             },
         )
+
+    # --- 2b. Guardrail Check on Raw Message (before RAG/score-floor) ---
+    # The main Converse-call guardrail check (below, Section 6) only runs if
+    # the message passes the KB-relevance score floor (Section 4) — messages
+    # unrelated to CSUCI content (off-topic, abusive, etc.) often score below
+    # that floor and would otherwise never reach the guardrail at all. This
+    # runs the guardrail directly on the raw message first, independent of
+    # KB relevance, so denied-topic/content-policy blocks apply regardless.
+    early_guardrail_result = check_guardrail_only(message)
+    logger.info(
+        "GUARDRAIL_CHECK_EARLY: sessionId=%s intervened=%s",
+        session_id,
+        early_guardrail_result["intervened"],
+    )
+    if early_guardrail_result["intervened"]:
+        logger.warning(
+            "GUARDRAIL_INTERVENED_EARLY: sessionId=%s trace=%s",
+            session_id,
+            json.dumps(early_guardrail_result["trace"], default=str),
+        )
+        is_masked_only = (
+            "masked" in early_guardrail_result["action_reason"].lower()
+            and "blocked" not in early_guardrail_result["action_reason"].lower()
+        )
+        if not is_masked_only and early_guardrail_result["blocked_message"]:
+            blocked_message = early_guardrail_result["blocked_message"]
+            _log_interaction(
+                status="guardrail_blocked_early",
+                message=message,
+                answered=True,
+                safety_result=safety_result,
+                chunks_count=0,
+                top_score=0.0,
+                answer=blocked_message,
+                citations=[],
+                escalation=None,
+                session_id=session_id,
+            )
+            return _build_response(
+                200,
+                {
+                    "answer": blocked_message,
+                    "answered": True,
+                    "citations": [],
+                    "escalation": None,
+                    "sessionId": session_id,
+                },
+            )
+        # Masked-only (e.g. PII in the raw message itself): not a block,
+        # fall through to the normal pipeline unchanged.
 
     # --- 3. RAG Retrieval ---
     if language_code == "es":
@@ -308,7 +393,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     converse_messages = format_messages_for_converse(history, message)
 
     try:
-        assistant_answer = invoke_model(
+        llm_result = invoke_model(
             system_prompt=system_prompt,
             messages=converse_messages,
         )
@@ -319,8 +404,53 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             {"error": "Sorry, I am having trouble connecting to Bedrock. Please try again later."},
         )
 
+    logger.info(
+        "GUARDRAIL_CHECK: sessionId=%s stopReason=%s",
+        session_id,
+        llm_result.get("stop_reason"),
+    )
+    if llm_result.get("stop_reason") == "guardrail_intervened":
+        guardrail_trace = llm_result.get("trace", {})
+        logger.warning(
+            "GUARDRAIL_INTERVENED: sessionId=%s trace=%s",
+            session_id,
+            json.dumps(guardrail_trace, default=str),
+        )
+
+        # Bedrock reports both hard blocks and PII masking via the same
+        # stopReason; only a hard block should short-circuit here — masking
+        # just redacts sensitive text in-place and the (redacted) answer
+        # should continue through the normal pipeline below.
+        action_reason = guardrail_trace.get("actionReason", "")
+        is_masked_only = "masked" in action_reason.lower() and "blocked" not in action_reason.lower()
+
+        if not is_masked_only:
+            blocked_message = llm_result["text"].strip()
+            _log_interaction(
+                status="guardrail_blocked",
+                message=message,
+                answered=True,
+                safety_result=safety_result,
+                chunks_count=len(retrieved_chunks),
+                top_score=top_score,
+                answer=blocked_message,
+                citations=[],
+                escalation=None,
+                session_id=session_id,
+            )
+            return _build_response(
+                200,
+                {
+                    "answer": blocked_message,
+                    "answered": True,
+                    "citations": [],
+                    "escalation": None,
+                    "sessionId": session_id,
+                },
+            )
+
     # Clean LLM output whitespace
-    assistant_answer = assistant_answer.strip()
+    assistant_answer = llm_result["text"].strip()
 
     # --- 7. Hallucination Guardrail 2: NO_ANSWER Sentinel Check ---
     if assistant_answer == "NO_ANSWER":

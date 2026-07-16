@@ -59,11 +59,12 @@ def _parse_response(response: dict) -> dict:
 class TestValidMessage:
     """A well-formed message should return an answer and sources."""
 
+    @patch("handler.check_guardrail_only")
     @patch("handler.invoke_model")
     @patch("handler.retrieve_context")
     @patch("handler.check_message")
     def test_returns_200_with_answer(
-        self, mock_check, mock_retrieve, mock_invoke
+        self, mock_check, mock_retrieve, mock_invoke, mock_guardrail
     ):
         # Safety filter — safe message
         mock_check.return_value = {
@@ -72,6 +73,8 @@ class TestValidMessage:
             "crisis_response": None,
             "escalation": {"needed": False, "category": None},
         }
+        # Early guardrail check — not intervened
+        mock_guardrail.return_value = {"intervened": False, "action_reason": "", "blocked_message": "", "trace": {}}
         # Retriever
         mock_retrieve.return_value = [
             {
@@ -82,7 +85,11 @@ class TestValidMessage:
             }
         ]
         # LLM (citations: must include the retrieved URL for validation)
-        mock_invoke.return_value = "You can register starting March 1. See https://csuci.edu/registration"
+        mock_invoke.return_value = {
+            "text": "You can register starting March 1. See https://csuci.edu/registration",
+            "stop_reason": "end_turn",
+            "trace": {},
+        }
 
         event = _apigw_event({"message": "How do I register?"})
         from handler import lambda_handler
@@ -99,11 +106,12 @@ class TestValidMessage:
         assert parsed["body"]["escalation"] is None
 
     @patch("handler.translate_query_to_english")
+    @patch("handler.check_guardrail_only")
     @patch("handler.invoke_model")
     @patch("handler.retrieve_context")
     @patch("handler.check_message")
     def test_returns_200_with_spanish_language_preference(
-        self, mock_check, mock_retrieve, mock_invoke, mock_translate
+        self, mock_check, mock_retrieve, mock_invoke, mock_guardrail, mock_translate
     ):
         # Mock translate
         mock_translate.return_value = "library"
@@ -114,6 +122,8 @@ class TestValidMessage:
             "crisis_response": None,
             "escalation": {"needed": False, "category": None},
         }
+        # Early guardrail check — not intervened
+        mock_guardrail.return_value = {"intervened": False, "action_reason": "", "blocked_message": "", "trace": {}}
         # Retriever
         mock_retrieve.return_value = [
             {
@@ -124,7 +134,11 @@ class TestValidMessage:
             }
         ]
         # LLM
-        mock_invoke.return_value = "La biblioteca está abierta. Ver https://csuci.edu/registration"
+        mock_invoke.return_value = {
+            "text": "La biblioteca está abierta. Ver https://csuci.edu/registration",
+            "stop_reason": "end_turn",
+            "trace": {},
+        }
 
         event = _apigw_event({"message": "biblioteca", "language": "es"})
         from handler import lambda_handler
@@ -173,6 +187,134 @@ class TestCrisisMessage:
 
 
 # ---------------------------------------------------------------------------
+# Tests — early guardrail check (before RAG retrieval / score floor)
+# ---------------------------------------------------------------------------
+class TestEarlyGuardrailCheck:
+    """The guardrail must be checked on the raw message before RAG retrieval,
+    so it can act on content regardless of KB-relevance score."""
+
+    @patch("handler.invoke_model")
+    @patch("handler.retrieve_context")
+    @patch("handler.check_guardrail_only")
+    @patch("handler.check_message")
+    def test_guardrail_block_returns_message_before_retrieval(
+        self, mock_check, mock_guardrail, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = {
+            "safe": True,
+            "crisis": False,
+            "crisis_response": None,
+            "escalation": {"needed": False, "category": None},
+        }
+        mock_guardrail.return_value = {
+            "intervened": True,
+            "action_reason": "Guardrail blocked.",
+            "blocked_message": "I can't help with that. Let's keep our conversation focused on CSUCI resources.",
+            "trace": {"contentPolicy": {"filters": [{"type": "INSULTS", "action": "BLOCKED"}]}},
+        }
+
+        event = _apigw_event({"message": "you are an idiot"})
+        from handler import lambda_handler
+
+        response = lambda_handler(event, {})
+        parsed = _parse_response(response)
+
+        assert parsed["status"] == 200
+        assert parsed["body"]["answered"] is True
+        assert parsed["body"]["answer"] == "I can't help with that. Let's keep our conversation focused on CSUCI resources."
+        assert parsed["body"]["escalation"] is None
+        # RAG retrieval and the main LLM call must never run once the
+        # guardrail has already blocked the raw message.
+        mock_retrieve.assert_not_called()
+        mock_invoke.assert_not_called()
+
+    @patch("handler.invoke_model")
+    @patch("handler.retrieve_context")
+    @patch("handler.check_guardrail_only")
+    @patch("handler.check_message")
+    def test_guardrail_masked_only_continues_to_retrieval(
+        self, mock_check, mock_guardrail, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = {
+            "safe": True,
+            "crisis": False,
+            "crisis_response": None,
+            "escalation": {"needed": False, "category": None},
+        }
+        # Masking (e.g. PII in the raw message) must NOT short-circuit —
+        # only a hard block should.
+        mock_guardrail.return_value = {
+            "intervened": True,
+            "action_reason": "No action.\nGuardrail masked.",
+            "blocked_message": "",
+            "trace": {},
+        }
+        mock_retrieve.return_value = [
+            {
+                "text": "Registration opens March 1.",
+                "source_url": "https://csuci.edu/registration",
+                "source_title": "Registration Info",
+                "score": 0.9,
+            }
+        ]
+        mock_invoke.return_value = {
+            "text": "You can register starting March 1. See https://csuci.edu/registration",
+            "stop_reason": "end_turn",
+            "trace": {},
+        }
+
+        event = _apigw_event({"message": "My email is test@csuci.edu, how do I register?"})
+        from handler import lambda_handler
+
+        response = lambda_handler(event, {})
+        parsed = _parse_response(response)
+
+        assert parsed["status"] == 200
+        assert parsed["body"]["answered"] is True
+        assert "register starting March 1" in parsed["body"]["answer"]
+        mock_retrieve.assert_called_once()
+        mock_invoke.assert_called_once()
+
+    @patch("handler.invoke_model")
+    @patch("handler.retrieve_context")
+    @patch("handler.check_guardrail_only")
+    @patch("handler.check_message")
+    def test_guardrail_not_intervened_continues_to_retrieval(
+        self, mock_check, mock_guardrail, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = {
+            "safe": True,
+            "crisis": False,
+            "crisis_response": None,
+            "escalation": {"needed": False, "category": None},
+        }
+        mock_guardrail.return_value = {"intervened": False, "action_reason": "", "blocked_message": "", "trace": {}}
+        mock_retrieve.return_value = [
+            {
+                "text": "Registration opens March 1.",
+                "source_url": "https://csuci.edu/registration",
+                "source_title": "Registration Info",
+                "score": 0.9,
+            }
+        ]
+        mock_invoke.return_value = {
+            "text": "You can register starting March 1. See https://csuci.edu/registration",
+            "stop_reason": "end_turn",
+            "trace": {},
+        }
+
+        event = _apigw_event({"message": "How do I register?"})
+        from handler import lambda_handler
+
+        response = lambda_handler(event, {})
+        parsed = _parse_response(response)
+
+        assert parsed["status"] == 200
+        mock_retrieve.assert_called_once()
+        mock_invoke.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
 # Tests — validation
 # ---------------------------------------------------------------------------
 class TestValidation:
@@ -206,11 +348,12 @@ class TestValidation:
 class TestHallucinationGuardrails:
     """Verify that score floors, sentinel responses, and citations are validated."""
 
+    @patch("handler.check_guardrail_only")
     @patch("handler.invoke_model")
     @patch("handler.retrieve_context")
     @patch("handler.check_message")
     def test_low_score_skips_llm_and_clarifies_on_first_turn(
-        self, mock_check, mock_retrieve, mock_invoke
+        self, mock_check, mock_retrieve, mock_invoke, mock_guardrail
     ):
         mock_check.return_value = {
             "safe": True,
@@ -218,6 +361,7 @@ class TestHallucinationGuardrails:
             "crisis_response": None,
             "escalation": {"needed": False, "category": None},
         }
+        mock_guardrail.return_value = {"intervened": False, "action_reason": "", "blocked_message": "", "trace": {}}
         mock_retrieve.return_value = [
             {
                 "text": "Irrelevant info",
@@ -240,11 +384,12 @@ class TestHallucinationGuardrails:
         assert parsed["body"]["escalation"] is None
         mock_invoke.assert_not_called()
 
+    @patch("handler.check_guardrail_only")
     @patch("handler.invoke_model")
     @patch("handler.retrieve_context")
     @patch("handler.check_message")
     def test_low_score_escalates_on_second_turn(
-        self, mock_check, mock_retrieve, mock_invoke
+        self, mock_check, mock_retrieve, mock_invoke, mock_guardrail
     ):
         mock_check.return_value = {
             "safe": True,
@@ -252,6 +397,7 @@ class TestHallucinationGuardrails:
             "crisis_response": None,
             "escalation": {"needed": False, "category": None},
         }
+        mock_guardrail.return_value = {"intervened": False, "action_reason": "", "blocked_message": "", "trace": {}}
         mock_retrieve.return_value = [
             {
                 "text": "Irrelevant info",
@@ -282,11 +428,12 @@ class TestHallucinationGuardrails:
         assert parsed["body"]["escalation"]["office"] == "Academic Advising"
         mock_invoke.assert_not_called()
 
+    @patch("handler.check_guardrail_only")
     @patch("handler.invoke_model")
     @patch("handler.retrieve_context")
     @patch("handler.check_message")
     def test_no_answer_sentinel_clarifies_on_first_turn(
-        self, mock_check, mock_retrieve, mock_invoke
+        self, mock_check, mock_retrieve, mock_invoke, mock_guardrail
     ):
         mock_check.return_value = {
             "safe": True,
@@ -294,6 +441,7 @@ class TestHallucinationGuardrails:
             "crisis_response": None,
             "escalation": {"needed": False, "category": None},
         }
+        mock_guardrail.return_value = {"intervened": False, "action_reason": "", "blocked_message": "", "trace": {}}
         mock_retrieve.return_value = [
             {
                 "text": "Some general registration rules.",
@@ -302,7 +450,7 @@ class TestHallucinationGuardrails:
                 "score": 0.85,
             }
         ]
-        mock_invoke.return_value = "NO_ANSWER"
+        mock_invoke.return_value = {"text": "NO_ANSWER", "stop_reason": "end_turn", "trace": {}}
 
         # First turn (empty history) -> should clarify
         event = _apigw_event({"message": "How do I override physics prerequisites?", "history": []})
@@ -316,11 +464,12 @@ class TestHallucinationGuardrails:
         assert "rephrase or provide a bit more details" in parsed["body"]["answer"]
         assert parsed["body"]["escalation"] is None
 
+    @patch("handler.check_guardrail_only")
     @patch("handler.invoke_model")
     @patch("handler.retrieve_context")
     @patch("handler.check_message")
     def test_no_answer_sentinel_escalates_on_second_turn(
-        self, mock_check, mock_retrieve, mock_invoke
+        self, mock_check, mock_retrieve, mock_invoke, mock_guardrail
     ):
         mock_check.return_value = {
             "safe": True,
@@ -328,6 +477,7 @@ class TestHallucinationGuardrails:
             "crisis_response": None,
             "escalation": {"needed": False, "category": None},
         }
+        mock_guardrail.return_value = {"intervened": False, "action_reason": "", "blocked_message": "", "trace": {}}
         mock_retrieve.return_value = [
             {
                 "text": "Some general registration rules.",
@@ -336,7 +486,7 @@ class TestHallucinationGuardrails:
                 "score": 0.85,
             }
         ]
-        mock_invoke.return_value = "NO_ANSWER"
+        mock_invoke.return_value = {"text": "NO_ANSWER", "stop_reason": "end_turn", "trace": {}}
         from handler import CLARIFICATION_TEXT
 
         # Second turn (history contains the clarification prompt) -> should escalate
@@ -358,11 +508,12 @@ class TestHallucinationGuardrails:
         assert parsed["body"]["escalation"]["trigger"] == "no_answer"
         assert parsed["body"]["escalation"]["office"] == "Registrar's Office"
 
+    @patch("handler.check_guardrail_only")
     @patch("handler.invoke_model")
     @patch("handler.retrieve_context")
     @patch("handler.check_message")
     def test_citation_validation_failure_clarifies_on_first_turn(
-        self, mock_check, mock_retrieve, mock_invoke
+        self, mock_check, mock_retrieve, mock_invoke, mock_guardrail
     ):
         mock_check.return_value = {
             "safe": True,
@@ -370,6 +521,7 @@ class TestHallucinationGuardrails:
             "crisis_response": None,
             "escalation": {"needed": False, "category": None},
         }
+        mock_guardrail.return_value = {"intervened": False, "action_reason": "", "blocked_message": "", "trace": {}}
         mock_retrieve.return_value = [
             {
                 "text": "Official details.",
@@ -378,7 +530,11 @@ class TestHallucinationGuardrails:
                 "score": 0.90,
             }
         ]
-        mock_invoke.return_value = "You can request this at Sage Hall. (No link included)"
+        mock_invoke.return_value = {
+            "text": "You can request this at Sage Hall. (No link included)",
+            "stop_reason": "end_turn",
+            "trace": {},
+        }
 
         # First turn -> should clarify
         event = _apigw_event({"message": "How do I request a card?", "history": []})
@@ -392,11 +548,12 @@ class TestHallucinationGuardrails:
         assert "rephrase or provide a bit more details" in parsed["body"]["answer"]
         assert parsed["body"]["escalation"] is None
 
+    @patch("handler.check_guardrail_only")
     @patch("handler.invoke_model")
     @patch("handler.retrieve_context")
     @patch("handler.check_message")
     def test_citation_validation_failure_escalates_on_second_turn(
-        self, mock_check, mock_retrieve, mock_invoke
+        self, mock_check, mock_retrieve, mock_invoke, mock_guardrail
     ):
         mock_check.return_value = {
             "safe": True,
@@ -404,6 +561,7 @@ class TestHallucinationGuardrails:
             "crisis_response": None,
             "escalation": {"needed": False, "category": None},
         }
+        mock_guardrail.return_value = {"intervened": False, "action_reason": "", "blocked_message": "", "trace": {}}
         mock_retrieve.return_value = [
             {
                 "text": "Official details.",
@@ -412,7 +570,11 @@ class TestHallucinationGuardrails:
                 "score": 0.90,
             }
         ]
-        mock_invoke.return_value = "You can request this at Sage Hall. (No link included)"
+        mock_invoke.return_value = {
+            "text": "You can request this at Sage Hall. (No link included)",
+            "stop_reason": "end_turn",
+            "trace": {},
+        }
         from handler import CLARIFICATION_TEXT
 
         # Second turn -> should escalate
@@ -440,11 +602,12 @@ class TestHallucinationGuardrails:
 class TestEscalation:
     """Escalation intent (user requested) should route and return answered: True."""
 
+    @patch("handler.check_guardrail_only")
     @patch("handler.invoke_model")
     @patch("handler.retrieve_context")
     @patch("handler.check_message")
     def test_user_requested_escalation_succeeds_with_escalation_payload(
-        self, mock_check, mock_retrieve, mock_invoke
+        self, mock_check, mock_retrieve, mock_invoke, mock_guardrail
     ):
         mock_check.return_value = {
             "safe": True,
@@ -452,6 +615,7 @@ class TestEscalation:
             "crisis_response": None,
             "escalation": {"needed": True, "category": "academic_advising"},
         }
+        mock_guardrail.return_value = {"intervened": False, "action_reason": "", "blocked_message": "", "trace": {}}
         mock_retrieve.return_value = [
             {
                 "text": "Schedule advisor appointments online.",
@@ -460,7 +624,11 @@ class TestEscalation:
                 "score": 0.85,
             }
         ]
-        mock_invoke.return_value = "Go to https://csuci.edu/advising to schedule."
+        mock_invoke.return_value = {
+            "text": "Go to https://csuci.edu/advising to schedule.",
+            "stop_reason": "end_turn",
+            "trace": {},
+        }
 
         event = _apigw_event({"message": "I need to talk to an advisor"})
         from handler import lambda_handler

@@ -15,7 +15,7 @@ s3_prefix            = "student-success-navigator"
 # Provide the Bedrock Knowledge Base ID before deploying.
 # Example:
 #   sam deploy --parameter-overrides BedrockKBId=XXXXXXXXXX Environment=dev
-parameter_overrides  = "BedrockKBId=\"REPLACE_WITH_YOUR_KB_ID\" Environment=\"dev\""
+parameter_overrides  = "BedrockKBId=\"XEAFKVXLTI\" GuardrailId=\"jjp9p75z6k87\" GuardrailVersion=\"1\" Environment=\"dev\""
 
 [default.build.parameters]
 cached  = true

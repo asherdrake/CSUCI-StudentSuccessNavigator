@@ -41,6 +41,64 @@ def _get_client():
     return _client
 
 
+def check_guardrail_only(text: str) -> dict:
+    """Run the Bedrock Guardrail against raw text via the standalone
+    ``ApplyGuardrail`` API, with no LLM call involved.
+
+    Used to check the student's raw message for content-safety issues
+    (denied topics, abusive language, etc.) before RAG retrieval / the
+    KB-relevance score floor gets a chance to short-circuit the request —
+    those are a separate, unrelated check and would otherwise prevent the
+    guardrail from ever seeing messages with a low KB-relevance score.
+
+    Args:
+        text: Raw text to check (typically the student's message).
+
+    Returns:
+        A dict with keys:
+            - ``intervened``: True if the guardrail acted on the text.
+            - ``action_reason``: Bedrock's ``actionReason`` string
+              (e.g. ``"Guardrail blocked."`` vs ``"...masked."``), empty
+              if the guardrail didn't intervene.
+            - ``blocked_message``: the guardrail's configured
+              blocked-message text, if it intervened with a block
+              (empty string otherwise).
+            - ``trace``: the raw assessment object for logging.
+
+    Note:
+        Failures here are swallowed (logged only) and treated as
+        "did not intervene" — this check is a pre-filter, not the sole
+        safety mechanism, and the existing Converse-call guardrail check
+        still runs downstream as a second layer.
+    """
+    try:
+        response = _get_client().apply_guardrail(
+            guardrailIdentifier=os.environ["GUARDRAIL_ID"],
+            guardrailVersion=os.environ.get("GUARDRAIL_VERSION", "DRAFT"),
+            source="INPUT",
+            content=[{"text": {"text": text}}],
+        )
+    except Exception:
+        logger.exception("Standalone ApplyGuardrail check failed; treating as not intervened.")
+        return {"intervened": False, "action_reason": "", "blocked_message": "", "trace": {}}
+
+    intervened = response.get("action", "NONE") == "GUARDRAIL_INTERVENED"
+
+    blocked_message = ""
+    if intervened:
+        output_blocks = response.get("outputs", [])
+        blocked_message = "".join(
+            block.get("text", "") for block in output_blocks if "text" in block
+        ).strip()
+
+    return {
+        "intervened": intervened,
+        "action_reason": response.get("actionReason", ""),
+        "blocked_message": blocked_message,
+        "trace": response.get("assessments", []),
+    }
+
+
 def format_messages_for_converse(
     conversation_history: list[dict],
     current_user_message: str,
@@ -106,8 +164,10 @@ def invoke_model(
     messages: list[dict],
     temperature: float = 0.2,
     max_tokens: int = 1024,
-) -> str:
-    """Invoke Claude 3.5 Sonnet via the Bedrock Converse API.
+) -> dict:
+    """Invoke Claude 3.5 Sonnet via the Bedrock Converse API, with the
+    Bedrock Guardrail (``GUARDRAIL_ID`` / ``GUARDRAIL_VERSION`` env vars)
+    applied to both input and output.
 
     Args:
         system_prompt: The system-level instruction prompt (built from
@@ -119,7 +179,13 @@ def invoke_model(
         max_tokens:    Maximum tokens in the response.  Default ``1024``.
 
     Returns:
-        The assistant's text response as a plain string.
+        A dict with keys:
+            - ``text``: the assistant's text response as a plain string
+              (guardrail-masked/redacted if the guardrail intervened).
+            - ``stop_reason``: the raw Converse ``stopReason`` field, e.g.
+              ``"end_turn"`` or ``"guardrail_intervened"``.
+            - ``trace``: the raw ``trace.guardrail`` object from the
+              response (empty dict if absent).
 
     Raises:
         Exception: Re-raised after logging if the Bedrock call fails.
@@ -132,6 +198,11 @@ def invoke_model(
             inferenceConfig={
                 "temperature": temperature,
                 "maxTokens": max_tokens,
+            },
+            guardrailConfig={
+                "guardrailIdentifier": os.environ["GUARDRAIL_ID"],
+                "guardrailVersion": os.environ.get("GUARDRAIL_VERSION", "DRAFT"),
+                "trace": "enabled",
             },
         )
     except Exception:
@@ -163,7 +234,11 @@ def invoke_model(
         usage.get("outputTokens", "N/A"),
     )
 
-    return assistant_text
+    return {
+        "text": assistant_text,
+        "stop_reason": response.get("stopReason"),
+        "trace": response.get("trace", {}).get("guardrail", {}),
+    }
 
 
 def translate_query_to_english(query: str) -> str:
@@ -183,13 +258,19 @@ def translate_query_to_english(query: str) -> str:
         }
     ]
     try:
-        translation = invoke_model(
+        result = invoke_model(
             system_prompt=system_prompt,
             messages=messages,
             temperature=0.0,
             max_tokens=64
         )
-        return translation.strip().strip('"').strip("'")
+        if result.get("stop_reason") == "guardrail_intervened":
+            # The guardrail's blocked-message text would otherwise get used
+            # verbatim as the KB search query, silently corrupting retrieval
+            # for the real (still-to-be-guardrail-checked) user message.
+            logger.warning("Query translation was guardrail-intervened; falling back to original text.")
+            return query
+        return result["text"].strip().strip('"').strip("'")
     except Exception:
         logger.warning("Query translation failed, falling back to original text.")
         return query

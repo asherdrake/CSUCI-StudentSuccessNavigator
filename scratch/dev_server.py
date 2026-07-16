@@ -11,7 +11,7 @@ import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # Setup python path imports
-PROJECT_ROOT = "/Users/aalindkale/Downloads/CSUCI Student Success Navigation"
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "lambda"))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "lambda/orchestrator"))
