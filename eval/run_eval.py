@@ -1,7 +1,7 @@
 """
 Live eval runner for the CSUCI Student Success Navigator.
 
-Runs every golden_set.json case through the REAL stack (handler → Bedrock
+Runs every single_turn_cases.json case through the REAL stack (handler → Bedrock
 Retrieve → Claude tool-use) and scores the model's routing decisions against
 the human-written answer key. This is an exact-match scorecard, not an
 LLM-as-a-judge: outcomes are categorical (answer / clarify / escalate /
@@ -12,7 +12,7 @@ Usage (needs live AWS credentials + the Bedrock KB):
     python eval/run_eval.py A20 U4     # only specific case ids
 
 Output: per-case verdicts, outcome accuracy, routing accuracy (on needs_human
-rows), a confusion matrix, and a JSON dump to eval/baseline_results.json.
+rows), a confusion matrix, and a JSON dump to eval/results/baseline_results.json.
 This is a manual/opt-in tool — deliberately NOT part of the pytest suite.
 """
 
@@ -26,10 +26,11 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "lambda"))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "lambda", "orchestrator"))
 
-GOLDEN_SET_PATH = os.path.join(PROJECT_ROOT, "eval", "golden_set.json")
-RESULTS_PATH = os.path.join(PROJECT_ROOT, "eval", "baseline_results.json")
+CASES_PATH = os.path.join(PROJECT_ROOT, "eval", "single_turn_cases.json")
+RESULTS_DIR = os.path.join(PROJECT_ROOT, "eval", "results")
+RESULTS_PATH = os.path.join(RESULTS_DIR, "baseline_results.json")
 
-# Golden-set taxonomy → expected response type
+# Single-turn-case taxonomy → expected response type
 EXPECTED_TYPE = {
     "answerable": "answer",
     "ambiguous": "clarify",
@@ -56,7 +57,7 @@ def load_env() -> None:
 
 
 def run_case(lambda_handler, case: dict) -> dict:
-    """Run one golden case through the live handler and score it."""
+    """Run one single-turn case through the live handler and score it."""
     event = {
         "httpMethod": "POST",
         "body": json.dumps(
@@ -106,16 +107,16 @@ def main() -> None:
     load_env()
     from handler import lambda_handler  # imported after env is ready
 
-    with open(GOLDEN_SET_PATH) as f:
-        golden = json.load(f)
+    with open(CASES_PATH) as f:
+        cases = json.load(f)
 
     only_ids = set(sys.argv[1:])
     if only_ids:
-        golden = [c for c in golden if c["id"] in only_ids]
+        cases = [c for c in cases if c["id"] in only_ids]
 
     results = []
-    for i, case in enumerate(golden, 1):
-        print(f"[{i}/{len(golden)}] {case['id']}: {case['query'][:70]}...", flush=True)
+    for i, case in enumerate(cases, 1):
+        print(f"[{i}/{len(cases)}] {case['id']}: {case['query'][:70]}...", flush=True)
         result = run_case(lambda_handler, case)
         status = "PASS" if result["type_ok"] else "FAIL"
         office_note = ""
@@ -166,6 +167,7 @@ def main() -> None:
                   f"{'/' + str(r['actual_office']) if r['actual_office'] else ''}")
             print(f"       msg: {r['message_preview']}")
 
+    os.makedirs(RESULTS_DIR, exist_ok=True)
     with open(RESULTS_PATH, "w") as f:
         json.dump(
             {

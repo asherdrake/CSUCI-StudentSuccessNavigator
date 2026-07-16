@@ -30,7 +30,7 @@ from pathlib import Path
 import boto3
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-GOLDEN_SET_PATH = REPO_ROOT / "eval" / "golden_set.json"
+SINGLE_TURN_CASES_PATH = REPO_ROOT / "eval" / "single_turn_cases.json"
 
 _logs_client = None
 
@@ -221,18 +221,18 @@ def run_verification_cases(url: str, log_group: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Part 5 — golden set run
+# Part 5 — single-turn cases run
 # ---------------------------------------------------------------------------
-def run_golden_set(url: str, log_group: str) -> None:
-    if not GOLDEN_SET_PATH.exists():
-        print(f"\nGolden set not found at {GOLDEN_SET_PATH}, skipping Part 5.")
+def run_single_turn_cases(url: str, log_group: str) -> None:
+    if not SINGLE_TURN_CASES_PATH.exists():
+        print(f"\nSingle-turn cases not found at {SINGLE_TURN_CASES_PATH}, skipping Part 5.")
         return
 
-    with open(GOLDEN_SET_PATH) as f:
-        golden_set = json.load(f)
+    with open(SINGLE_TURN_CASES_PATH) as f:
+        cases = json.load(f)
 
     print(f"\n\n{'#' * 70}")
-    print(f"# PART 5 — Golden set ({len(golden_set)} questions)")
+    print(f"# PART 5 — Single-turn cases ({len(cases)} questions)")
     print(f"{'#' * 70}")
 
     over_blocked = []
@@ -240,7 +240,7 @@ def run_golden_set(url: str, log_group: str) -> None:
     no_evidence = []
     unanswerable_caught_by = {"citation_or_score_logic": [], "guardrail": [], "neither": []}
 
-    for item in golden_set:
+    for item in cases:
         result = verify_and_log(url, log_group, item["id"], item["query"])
         response, evidence = result["response"], result["evidence"]
 
@@ -291,8 +291,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Live guardrail verification against the deployed /chat endpoint.")
     parser.add_argument("--url", default=os.environ.get("CHAT_API_URL"), help="Deployed /chat endpoint URL")
     parser.add_argument("--log-group", default=os.environ.get("CHAT_API_LOG_GROUP"), help="CloudWatch log group for the orchestrator Lambda")
-    parser.add_argument("--cases-only", action="store_true", help="Run only the 6 Part 4 verification cases, skip the golden set")
-    parser.add_argument("--golden-only", action="store_true", help="Run only the Part 5 golden set, skip the 6 verification cases")
+    parser.add_argument("--cases-only", action="store_true", help="Run only the 6 Part 4 verification cases, skip the single-turn cases")
+    parser.add_argument("--single-turn-only", action="store_true", help="Run only the Part 5 single-turn cases, skip the 6 verification cases")
     args = parser.parse_args()
 
     if not args.url:
@@ -305,10 +305,10 @@ def main() -> None:
     print(f"Target endpoint: {args.url}")
     print(f"Log group: {args.log_group}")
 
-    if not args.golden_only:
+    if not args.single_turn_only:
         run_verification_cases(args.url, args.log_group)
     if not args.cases_only:
-        run_golden_set(args.url, args.log_group)
+        run_single_turn_cases(args.url, args.log_group)
 
 
 if __name__ == "__main__":

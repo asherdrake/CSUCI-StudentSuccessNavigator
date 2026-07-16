@@ -1,7 +1,7 @@
 {
-  "run_at": "2026-07-16T02:46:07.380768+00:00",
+  "run_at": "2026-07-16T21:28:17.373542+00:00",
   "model_id": "us.anthropic.claude-sonnet-5",
-  "outcome_accuracy": "26/32",
+  "outcome_accuracy": "27/32",
   "routing_accuracy": "6/7",
   "results": [
     {
@@ -15,7 +15,7 @@
       "actual_office": null,
       "office_ok": null,
       "escalation_ok": null,
-      "message_preview": "Here's how to schedule an appointment with an academic advisor through Dolphin Navigate:\n\n1. Log in to your myCI portal to access Dolphin Navigate (note: only c"
+      "message_preview": "Here's how to schedule an appointment with your academic advisor through Dolphin Navigate:\n\n1. Log in to your **myCI** portal to access Dolphin Navigate (or go "
     },
     {
       "id": "A2",
@@ -28,7 +28,7 @@
       "actual_office": null,
       "office_ok": null,
       "escalation_ok": null,
-      "message_preview": "If you're a Pre-Nursing major, you'll be advised by one of the Pre-Nursing Academic Advisors [1][2]:\n\n- **Venessa Hutchins** \u2013 prenursing@csuci.edu, 805-437-857"
+      "message_preview": "If you're a pre-nursing student, you'll be advised by one of the Pre-Nursing Academic Advisors [2]:\n\n| Name | Email | Phone | Office |\n|---|---|---|---|\n| Venes"
     },
     {
       "id": "A3",
@@ -41,7 +41,7 @@
       "actual_office": null,
       "office_ok": null,
       "escalation_ok": null,
-      "message_preview": "The withdrawal (drop) rules depend on how far into the term you are, based on the percentage of instructional time elapsed (the \"third week\" mark corresponds to"
+      "message_preview": "According to CSUCI's withdrawal policy, once you're past the third week of classes, the rules become stricter:\n\n1. **After the third week and before the end of "
     },
     {
       "id": "A4",
@@ -54,7 +54,7 @@
       "actual_office": null,
       "office_ok": null,
       "escalation_ok": null,
-      "message_preview": "If you're an undergraduate student in good academic standing, you can enroll in up to **18 units** without needing advisor approval [1][4].\n\nIf you're on academ"
+      "message_preview": "If you're an undergraduate student in **good academic standing**, you can enroll in up to **18 units** without needing advisor approval [1][3].\n\nIf you're an un"
     },
     {
       "id": "A5",
@@ -67,12 +67,25 @@
       "actual_office": null,
       "office_ok": null,
       "escalation_ok": null,
-      "message_preview": "You can submit your financial aid verification documents entirely online through the **Financial Aid Student Forms** portal. Here's how:\n\n1. Log on to your **my"
+      "message_preview": "You can submit your financial aid verification documents online through your **myCI portal**. Here's how:\n\n1. Log on to your myCI portal.\n2. Under \"Services,\" f"
     },
     {
       "id": "A6",
       "topic": "Financial Aid Documentation",
       "query": "What is the school code for FAFSA?",
+      "expected_type": "answer",
+      "actual_type": "escalate",
+      "type_ok": false,
+      "expected_office": null,
+      "actual_office": "Financial Aid",
+      "office_ok": null,
+      "escalation_ok": null,
+      "message_preview": "I wasn't able to fully resolve this myself, but this is exactly the kind of question the team below can help with. I've routed your request to them \u2014 their cont"
+    },
+    {
+      "id": "A7",
+      "topic": "Tutoring & Support Center",
+      "query": "Where can I get help with writing research papers?",
       "expected_type": "answer",
       "actual_type": "answer",
       "type_ok": true,
@@ -80,33 +93,20 @@
       "actual_office": null,
       "office_ok": null,
       "escalation_ok": null,
-      "message_preview": "CSU Channel Islands' Federal School Code for the FAFSA is **039803**. [4]"
-    },
-    {
-      "id": "A7",
-      "topic": "Tutoring & Support Center",
-      "query": "Where can I get help with writing research papers?",
-      "expected_type": "answer",
-      "actual_type": "escalate",
-      "type_ok": false,
-      "expected_office": null,
-      "actual_office": "Learning Resource Center",
-      "office_ok": null,
-      "escalation_ok": null,
-      "message_preview": "I wasn't able to fully resolve this myself, but this is exactly the kind of question the team below can help with. I've routed your request to them \u2014 their cont"
+      "message_preview": "You have several options for getting help with research paper writing at CI:\n\n1. **Writing and Multiliteracy Center (WMC)** \u2013 The WMC offers tutors who can help"
     },
     {
       "id": "A8",
       "topic": "Tutoring & Support Center",
       "query": "Does the campus offer free counseling or mental health support for students?",
       "expected_type": "answer",
-      "actual_type": "escalate",
-      "type_ok": false,
+      "actual_type": "answer",
+      "type_ok": true,
       "expected_office": null,
-      "actual_office": "Student Support Services",
+      "actual_office": null,
       "office_ok": null,
       "escalation_ok": null,
-      "message_preview": "I wasn't able to fully resolve this myself, but this is exactly the kind of question the team below can help with. I've routed your request to them \u2014 their cont"
+      "message_preview": "Yes \u2014 CSUCI offers free, confidential mental health support through **Counseling and Psychological Services (CAPS)**, formerly called Personal Counseling Servic"
     },
     {
       "id": "A9",
@@ -119,7 +119,7 @@
       "actual_office": null,
       "office_ok": null,
       "escalation_ok": null,
-      "message_preview": "Here's how to apply for graduation at CSUCI:\n\n1. Go to https://myci.csuci.edu (or www.csuci.edu and click the myCI icon) [1].\n2. On the sign-in page, enter your"
+      "message_preview": "Here's how to apply for graduation through myCI:\n\n1. Log into myCI at https://myci.csuci.edu (or through www.csuci.edu by clicking the myCI icon) using your Dol"
     },
     {
       "id": "A10",
@@ -132,7 +132,7 @@
       "actual_office": null,
       "office_ok": null,
       "escalation_ok": null,
-      "message_preview": "I don't have a passage that lists a single universal Spring graduation filing deadline for all majors. What I can tell you:\n\n- The Application for Graduation mu"
+      "message_preview": "The application deadline to apply for **Spring 2026** graduation is **October 1, 2025** for both undergraduate and graduate students [1][4].\n\nIf you're planning"
     },
     {
       "id": "A11",
@@ -145,7 +145,7 @@
       "actual_office": null,
       "office_ok": null,
       "escalation_ok": null,
-      "message_preview": "Yes \u2014 CSUCI has a course repeat policy that can help improve your GPA:\n\n1. **Grade forgiveness repeats:** If you earned a grade of \"C-\" or lower in a course, yo"
+      "message_preview": "Yes \u2014 you can retake courses to improve your GPA. This is called **Course Repeat / Grade Forgiveness**, and here's how it works:\n\n1. **Which grades qualify:** Y"
     },
     {
       "id": "A12",
@@ -171,7 +171,7 @@
       "actual_office": null,
       "office_ok": null,
       "escalation_ok": null,
-      "message_preview": "Changing your major at CSUCI is a straightforward process:\n\n1. **Fill out the Request for Change of Major, Minor or Certification form.** [2]\n2. **Know your opt"
+      "message_preview": "Here's how to change your major at CSUCI:\n\n1. **Explore your options first (optional but recommended).** You can use tools like the Career Development Center's "
     },
     {
       "id": "A14",
@@ -181,23 +181,23 @@
       "actual_type": "answer",
       "type_ok": true,
       "expected_office": null,
-      "actual_office": "Registrar's Office",
+      "actual_office": null,
       "office_ok": null,
       "escalation_ok": null,
-      "message_preview": "Here's what to know about withdrawing from all your classes at CSUCI:\n\n1. **Follow the official University withdrawal procedure** \u2014 you must formally cancel you"
+      "message_preview": "Here's how a full/term withdrawal works at CSUCI:\n\n1. **Submit your request** through the Withdrawal portal. You'll receive a confirmation email once it's submi"
     },
     {
       "id": "A15",
       "topic": "Contextual Suggestions",
       "query": "What should I do if I fail a prerequisite class?",
       "expected_type": "answer",
-      "actual_type": "answer",
-      "type_ok": true,
+      "actual_type": "escalate",
+      "type_ok": false,
       "expected_office": null,
       "actual_office": "Academic Advising",
       "office_ok": null,
       "escalation_ok": null,
-      "message_preview": "The passages don't directly cover \"what to do if you fail a prerequisite class,\" but here's related guidance that can help:\n\n1. **If you failed the prerequisite"
+      "message_preview": "I wasn't able to fully resolve this myself, but this is exactly the kind of question the team below can help with. I've routed your request to them \u2014 their cont"
     },
     {
       "id": "A16",
@@ -210,33 +210,33 @@
       "actual_office": null,
       "office_ok": null,
       "escalation_ok": null,
-      "message_preview": "Yes! You can take classes over the summer at a community college. [1]\n\nA few tips to make sure the courses count:\n1. Visit **www.assist.org** to check which cou"
+      "message_preview": "Yes! You can take classes at a community college over the summer. Just visit **www.assist.org** to check which courses are transferable and articulated from a C"
     },
     {
       "id": "A17",
       "topic": "Summarizing & Links",
       "query": "How do I request an official academic transcript?",
       "expected_type": "answer",
-      "actual_type": "escalate",
-      "type_ok": false,
+      "actual_type": "answer",
+      "type_ok": true,
       "expected_office": null,
-      "actual_office": "Registrar's Office",
+      "actual_office": null,
       "office_ok": null,
       "escalation_ok": null,
-      "message_preview": "I wasn't able to fully resolve this myself, but this is exactly the kind of question the team below can help with. I've routed your request to them \u2014 their cont"
+      "message_preview": "To request an official academic transcript from CSUCI:\n\n1. Submit a written request \u2014 either by completing the Request for Official Transcript form or by writin"
     },
     {
       "id": "A18",
       "topic": "Summarizing & Links",
       "query": "Where is the official academic calendar located?",
       "expected_type": "answer",
-      "actual_type": "escalate",
-      "type_ok": false,
+      "actual_type": "answer",
+      "type_ok": true,
       "expected_office": null,
-      "actual_office": "Registrar's Office",
+      "actual_office": null,
       "office_ok": null,
       "escalation_ok": null,
-      "message_preview": "I wasn't able to fully resolve this myself, but this is exactly the kind of question the team below can help with. I've routed your request to them \u2014 their cont"
+      "message_preview": "The official CSUCI academic calendars are posted on the Faculty Affairs, Success and Equity (FASE) \"Calendars\" webpage. There you can find the current calendars"
     },
     {
       "id": "A19",
@@ -308,13 +308,13 @@
       "topic": "Absent Policy / No Matching Office",
       "query": "What is the policy for bringing pets into university housing?",
       "expected_type": "escalate",
-      "actual_type": "escalate",
-      "type_ok": true,
+      "actual_type": "answer",
+      "type_ok": false,
       "expected_office": "Student Support Services",
-      "actual_office": "Student Support Services",
-      "office_ok": true,
+      "actual_office": null,
+      "office_ok": false,
       "escalation_ok": null,
-      "message_preview": "I wasn't able to fully resolve this myself, but this is exactly the kind of question the team below can help with. I've routed your request to them \u2014 their cont"
+      "message_preview": "Housing at CSUCI does not allow ordinary \"pets\" to live in the residence halls \u2014 only **service animals** and approved **emotional support animals (ESAs)** are "
     },
     {
       "id": "U5",
@@ -327,7 +327,7 @@
       "actual_office": "Financial Aid",
       "office_ok": true,
       "escalation_ok": null,
-      "message_preview": "I want to make sure I point you to the right resource, but based on what's available, here's what I can share:\n\nThe passages I have don't describe a process for"
+      "message_preview": "I don't have specifics on scholarship appeals, but here's what the passages cover about similar appeal processes at CSUCI:\n\n- **Financial Aid SAP Appeal (Satisf"
     },
     {
       "id": "U6",
@@ -379,7 +379,7 @@
       "actual_office": null,
       "office_ok": null,
       "escalation_ok": null,
-      "message_preview": "Which deadline do you mean \u2014 the CSU admission application filing period (e.g., Fall term Oct 1\u2013Nov 30), or the FAFSA/financial aid priority deadline for the 20"
+      "message_preview": "Which application deadline are you asking about \u2014 graduation application, MSFT funding application, transfer admissions application, or something else?"
     },
     {
       "id": "M2",
@@ -392,7 +392,7 @@
       "actual_office": null,
       "office_ok": null,
       "escalation_ok": null,
-      "message_preview": "Could you clarify what you mean \u2014 are you asking about the total units needed to graduate (typically 120 units for a bachelor's degree), the maximum units you c"
+      "message_preview": "Could you clarify what you mean \u2014 are you asking how many units are needed for your class standing (e.g., sophomore, junior), or how many total units are requir"
     },
     {
       "id": "M3",
@@ -405,7 +405,7 @@
       "actual_office": null,
       "office_ok": null,
       "escalation_ok": null,
-      "message_preview": "Which appeal are you asking about \u2014 an undergraduate academic disqualification appeal, a graduate disqualification appeal, a residency (tuition) classification "
+      "message_preview": "Could you clarify what you'd like to appeal? For example: a final course grade, academic disqualification/probation, a residency (tuition) classification decisi"
     },
     {
       "id": "P1",
@@ -415,10 +415,10 @@
       "actual_type": "answer",
       "type_ok": true,
       "expected_office": "Academic Advising",
-      "actual_office": "Student Support Services",
-      "office_ok": false,
+      "actual_office": "Academic Advising",
+      "office_ok": true,
       "escalation_ok": true,
-      "message_preview": "Here's how to get set up for course registration and connect with an advisor about your schedule:\n\n**Registering for classes**\n1. New students select an Academi"
+      "message_preview": "Here's how to get ready to register for classes at CSUCI:\n\n1. **Check your Degree Progress Report** \u2013 Log into your myCI account, go to your CI Records Dashboar"
     }
   ]
 }

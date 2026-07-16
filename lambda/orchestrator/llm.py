@@ -15,6 +15,9 @@ Environment variables
 ---------------------
 - ``MODEL_ID`` — Bedrock model/inference-profile identifier. Claude models are
   inference-profile only; defaults to ``us.anthropic.claude-sonnet-5``.
+- ``MAX_TOKENS`` — output token cap for the main tool-use decision; defaults to
+  ``_DEFAULT_MAX_TOKENS``. Too low truncates long answers into malformed tool
+  calls that needlessly fail-safe to a human.
 """
 
 import logging
@@ -29,6 +32,14 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 _DEFAULT_MODEL_ID = "us.anthropic.claude-sonnet-5"
+
+# Output token cap for the main forced-tool-use decision. Long compound answers
+# (e.g. "how do I register? also connect me with an advisor") can exceed a tight
+# budget; when generation is truncated mid-tool-call the emitted toolUse is
+# malformed (``citations`` never lands as its own field), which fails structural
+# validation and needlessly fail-safes to a human. Keep this generous. Override
+# with MAX_TOKENS.
+_DEFAULT_MAX_TOKENS = 2048
 
 # Fast/cheap model used for the auxiliary query-rewriting and translation
 # steps (not the main tool-use decision). Override with REWRITE_MODEL_ID.
@@ -55,6 +66,17 @@ def _get_client():
 def _get_model_id() -> str:
     """Read MODEL_ID at request time so dev_server's late load_env() works."""
     return os.environ.get("MODEL_ID", _DEFAULT_MODEL_ID)
+
+
+def _get_max_tokens() -> int:
+    """Output token cap for the main tool-use call (read at request time)."""
+    raw = os.environ.get("MAX_TOKENS")
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            logger.warning("Invalid MAX_TOKENS=%r; using default %d.", raw, _DEFAULT_MAX_TOKENS)
+    return _DEFAULT_MAX_TOKENS
 
 
 def _get_rewrite_model_id() -> str:
@@ -194,7 +216,7 @@ def invoke_model(
     system_prompt: str,
     messages: list[dict],
     tool_config: dict,
-    max_tokens: int = 1024,
+    max_tokens: Optional[int] = None,
 ) -> list[dict]:
     """Invoke the model with forced tool-use and return the parsed tool calls.
 
@@ -209,7 +231,8 @@ def invoke_model(
         system_prompt: The thin global system prompt (with numbered passages).
         messages:      Converse-format messages.
         tool_config:   ``tools.TOOL_CONFIG`` (tools + toolChoice).
-        max_tokens:    Response cap.
+        max_tokens:    Response cap; defaults to ``_get_max_tokens()`` (MAX_TOKENS
+                       env var, else ``_DEFAULT_MAX_TOKENS``) when None.
 
     Returns:
         A list of ``{"name": str, "input": dict}`` tool calls (possibly empty
@@ -222,6 +245,8 @@ def invoke_model(
         (the handler maps this to HTTP 500, distinct from unusable output).
     """
     model_id = _get_model_id()
+    if max_tokens is None:
+        max_tokens = _get_max_tokens()
     converse_kwargs: dict = {
         "modelId": model_id,
         "system": [{"text": system_prompt}],

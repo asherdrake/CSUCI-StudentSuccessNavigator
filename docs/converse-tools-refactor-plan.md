@@ -24,7 +24,7 @@ out of conflicting prose into discrete tool descriptions.
   of the prompt into code.
 - **B** — replace sentinels with Converse tool-use (four tools, model picks).
 - **D** — collapse the API response to a `type`-discriminated contract.
-- Eval runner over `eval/golden_set.json`.
+- Eval runner over `eval/single_turn_cases.json`.
 - Thin frontend adapter to consume the new contract.
 
 **Deferred (explicitly not this branch):**
@@ -215,7 +215,7 @@ parsing that a framework dependency isn't worth.
   misroutes happen).
 - **Scorecard, not a hard gate** — establish the new-system baseline, watch for
   regressions on later tweaks.
-- **Prereq:** relabel `golden_set.json` `type` to the four-outcome taxonomy
+- **Prereq:** relabel `single_turn_cases.json` `type` to the four-outcome taxonomy
   (`answerable | needs_human | out_of_scope | ambiguous`) and add a few
   non-answerable / ambiguous cases. It's a human answer key (exact-match), **not**
   LLM-as-a-judge.
@@ -254,6 +254,6 @@ Each step is an independent checkpoint:
 ## 16. Open to-dos
 
 - Real contact details for `general_support` in `router.py`.
-- Add `not_answerable` / `ambiguous` / `out_of_scope` rows to `golden_set.json`.
+- Add `not_answerable` / `ambiguous` / `out_of_scope` rows to `single_turn_cases.json`.
 - Decide whether to keep the "always suggest related topics" mandate (a product
   choice; adds tokens, can cause padding) — orthogonal to the schema.

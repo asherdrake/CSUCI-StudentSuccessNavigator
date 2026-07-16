@@ -146,7 +146,7 @@ See [api_reference.md](api_reference.md). Summary: every 200 response is
 
 ## Evaluation
 
-`eval/golden_set.json` is a human-written answer key (~31 cases) labeled with
+`eval/single_turn_cases.json` is a human-written answer key (~31 cases) labeled with
 the four-outcome taxonomy (`answerable` / `ambiguous` / `needs_human` /
 `out_of_scope`, plus `crisis`) and expected offices. `eval/run_eval.py` runs
 every case through the **live stack** and reports outcome accuracy, routing

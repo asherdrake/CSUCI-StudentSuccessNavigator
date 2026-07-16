@@ -94,7 +94,7 @@ The backend test suite covers safety keywords, Converse tool-call parsing and va
 pytest tests/ -v
 ```
 
-There is also a **live eval** (needs AWS credentials): `python eval/run_eval.py` runs the golden set through the real stack and prints outcome/routing accuracy plus a confusion matrix. Compare against `eval/baseline_results.json` before merging prompt or tool-description changes.
+There is also a **live eval** (needs AWS credentials): `python eval/run_eval.py` runs the single-turn cases through the real stack and prints outcome/routing accuracy plus a confusion matrix. Compare against `eval/results/baseline_results.json` before merging prompt or tool-description changes.
 
 ---
 
@@ -145,7 +145,8 @@ CSUCI Student Success Navigation/
 │   │   └── router.py          ← office phone book + ticket assembly
 │   └── safety_filter.py       ← crisis & human-request detection
 ├── eval/
-│   ├── golden_set.json        ← human answer key (outcome + office labels)
+│   ├── single_turn_cases.json ← single-turn answer key (outcome + office labels)
+│   ├── multi_turn_cases.json  ← multi-turn conversation scenarios (C1–C15)
 │   └── run_eval.py            ← live scorecard: accuracy + confusion matrix
 ├── tests/
 │   ├── conftest.py            ← shared fixtures
