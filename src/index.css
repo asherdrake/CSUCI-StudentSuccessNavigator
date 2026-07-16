@@ -1,0 +1,474 @@
+/* CSS Visual Tokens & Brand Theme for CSUCI Navigator */
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --csuci-red: #C51B29;
+  --csuci-red-hover: #A3101E;
+  --csuci-red-light: rgba(197, 27, 41, 0.08);
+  --csuci-silver: #F8FAFC;
+  --csuci-white: #FFFFFF;
+  --csuci-dark: #0F172A;
+  --csuci-muted: #64748B;
+  --csuci-border: #E2E8F0;
+  
+  --font-sans: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+  --transition-smooth: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  --shadow-bubble: 0 10px 30px -5px rgba(197, 27, 41, 0.3), 0 8px 15px -6px rgba(197, 27, 41, 0.2);
+  --shadow-premium: 0 20px 25px -5px rgba(0, 0, 0, 0.05), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  --shadow-input: 0 10px 40px rgba(197, 27, 41, 0.06);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--csuci-silver);
+  color: var(--csuci-dark);
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+}
+
+/* Page Layout Shell */
+.app-viewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Fixed Brand Header at the top */
+.app-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 70px;
+  background-color: var(--csuci-red);
+  color: var(--csuci-white);
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 1000;
+  border-bottom: 2px solid var(--csuci-red-hover);
+  box-shadow: 0 4px 15px rgba(197, 27, 41, 0.15);
+}
+
+.brand-section {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-logo {
+  background-color: var(--csuci-white);
+  color: var(--csuci-red);
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 20px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+.brand-info h1 {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.brand-info p {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* API Badge */
+.api-badge {
+  background-color: rgba(255, 255, 255, 0.15);
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.api-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #10B981;
+}
+
+/* Floating Draggable Chat Bubble */
+.chat-trigger-bubble {
+  position: fixed;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--csuci-red);
+  color: var(--csuci-white);
+  box-shadow: var(--shadow-bubble);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  z-index: 999;
+  user-select: none;
+  touch-action: none;
+  transition: transform 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.25s ease;
+}
+
+.chat-trigger-bubble:hover {
+  transform: scale(1.15) translateY(-4px);
+}
+
+.chat-trigger-bubble:active {
+  cursor: grabbing;
+}
+
+.chat-trigger-bubble.hidden {
+  transform: scale(0);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.bubble-icon {
+  width: 28px;
+  height: 28px;
+  fill: currentColor;
+}
+
+/* Main Dashboard Panel stretching full-screen under header */
+.main-dashboard {
+  position: absolute;
+  top: 70px;
+  left: 0;
+  right: 0;
+  height: calc(100vh - 70px); 
+  background-color: var(--csuci-white);
+  display: flex;
+  flex-direction: column;
+  z-index: 500;
+  
+  /* Zoom transitions slowed down by 50% */
+  transition: transform 0.9s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.72s ease;
+  transform: scale(0);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.main-dashboard.open {
+  transform: scale(1);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Close Dashboard Button */
+.close-dashboard-btn {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  background: transparent;
+  border: none;
+  color: var(--csuci-muted);
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 50%;
+  transition: var(--transition-smooth);
+  z-index: 600;
+}
+
+.close-dashboard-btn:hover {
+  background-color: var(--csuci-silver);
+  color: var(--csuci-dark);
+}
+
+/* Gemini Home Screen (No chat started) */
+.gemini-home-container {
+  flex: 1; 
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 24px;
+  position: relative;
+  background-color: var(--csuci-white);
+}
+
+/* Centered content wrapper to hold glowing backplate, text and input pill */
+.gemini-content-wrapper {
+  position: relative;
+  width: 100%;
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 180px; 
+  z-index: 2;
+}
+
+/* Center Red Glow Backplate aligned behind wrapper */
+.gemini-glow-bg {
+  position: absolute;
+  width: 1200px;
+  height: 600px;
+  background: radial-gradient(circle, rgba(197, 27, 41, 0.35) 0%, rgba(197, 27, 41, 0.12) 35%, rgba(255, 255, 255, 0) 70%);
+  filter: blur(80px);
+  pointer-events: none;
+  z-index: 1;
+  top: 60%; 
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.gemini-greeting {
+  font-size: 44px;
+  font-weight: 600;
+  text-align: center;
+  margin-bottom: 32px;
+  background: linear-gradient(135deg, var(--csuci-dark) 40%, var(--csuci-red) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  z-index: 2;
+  animation: fadeInDown 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes fadeInDown {
+  from { opacity: 0; transform: translateY(-15px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Center Pill Input box (Gemini Layout) */
+.gemini-pill-input-box {
+  width: 100%;
+  max-width: 720px;
+  background-color: var(--csuci-white);
+  border: 1px solid var(--csuci-border);
+  border-radius: 32px;
+  box-shadow: var(--shadow-premium);
+  display: flex;
+  align-items: center;
+  padding: 8px 16px;
+  transition: var(--transition-smooth);
+  z-index: 2;
+}
+
+.gemini-pill-input-box:focus-within {
+  border-color: var(--csuci-red);
+  box-shadow: 0 10px 40px rgba(197, 27, 41, 0.12);
+  transform: translateY(-2px);
+}
+
+.gemini-pill-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  font-family: var(--font-sans);
+  font-size: 16px;
+  padding: 12px 16px;
+  color: var(--csuci-dark);
+}
+
+.gemini-input-icon {
+  color: var(--csuci-muted);
+  background: none;
+  border: none;
+  padding: 10px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition-smooth);
+}
+
+.gemini-input-icon:hover {
+  background-color: var(--csuci-silver);
+  color: var(--csuci-red);
+}
+
+/* Active Chat Thread View */
+.active-chat-container {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-messages-scroll {
+  flex: 1;
+  padding: 24px;
+  overflow-y: auto;
+  background-color: var(--csuci-white);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding-top: 40px;
+}
+
+.chat-bubble-row {
+  display: flex;
+  width: 100%;
+}
+
+.chat-bubble-row.user {
+  justify-content: flex-end;
+}
+
+.chat-text-bubble {
+  max-width: 75%;
+  padding: 14px 20px;
+  border-radius: 18px;
+  font-size: 15px;
+  line-height: 1.5;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+  white-space: pre-wrap;
+}
+
+.chat-bubble-row.user .chat-text-bubble {
+  background-color: var(--csuci-red);
+  color: var(--csuci-white);
+  border-bottom-right-radius: 4px;
+}
+
+.chat-bubble-row.bot .chat-text-bubble {
+  background-color: var(--csuci-silver);
+  color: var(--csuci-dark);
+  border: 1px solid var(--csuci-border);
+  border-bottom-left-radius: 4px;
+}
+
+/* Bottom Input Bar for active chat */
+.chat-bottom-input-bar {
+  padding: 16px 24px;
+  background-color: var(--csuci-white);
+  border-top: 1px solid var(--csuci-border);
+  display: flex;
+  justify-content: center;
+}
+
+/* Citations & Escalations */
+.citations-wrapper {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--csuci-border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.citation-btn {
+  display: inline-flex;
+  align-items: center;
+  background-color: var(--csuci-white);
+  color: var(--csuci-red);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  text-decoration: none;
+  font-weight: 500;
+  border: 1px solid var(--csuci-border);
+  transition: var(--transition-smooth);
+}
+
+.citation-btn:hover {
+  background-color: var(--csuci-red-light);
+  border-color: var(--csuci-red);
+}
+
+.escalation-alert-box {
+  background-color: #FEF2F2;
+  border: 1px dashed #FCA5A5;
+  border-radius: 10px;
+  padding: 16px;
+  margin-top: 12px;
+  color: #991B1B;
+}
+
+.escalation-alert-box h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.escalation-details {
+  background-color: var(--csuci-white);
+  padding: 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  border: 1px solid #FEE2E2;
+  margin-top: 8px;
+}
+
+.escalation-details a {
+  color: var(--csuci-red);
+  text-decoration: underline;
+  font-weight: 500;
+}
+
+.ticket-draft-log {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid #FEE2E2;
+  font-size: 11px;
+}
+
+.ticket-draft-log-box {
+  font-family: monospace;
+  background-color: #FFFBEB;
+  padding: 6px;
+  border-radius: 4px;
+  border: 1px solid #FEF3C7;
+  margin-top: 4px;
+  color: #78350F;
+}
+
+/* Typing Indicator Animation */
+.typing-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+}
+
+.typing-dot-bubble {
+  width: 6px;
+  height: 6px;
+  background-color: var(--csuci-muted);
+  border-radius: 50%;
+  animation: typingBounce 1.4s infinite ease-in-out both;
+}
+
+.typing-dot-bubble:nth-child(1) { animation-delay: -0.32s; }
+.typing-dot-bubble:nth-child(2) { animation-delay: -0.16s; }
+
+@keyframes typingBounce {
+  0%, 80%, 100% { transform: scale(0); }
+  40% { transform: scale(1); }
+}
+
+/* Custom scrollbars */
+.chat-messages-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.chat-messages-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.chat-messages-scroll::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.08);
+  border-radius: 3px;
+}
+.chat-messages-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.15);
+}

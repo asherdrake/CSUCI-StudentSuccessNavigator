@@ -20,6 +20,7 @@ htmlcov/
 # OS metadata
 .DS_Store
 Thumbs.db
+node_modules/
 
 # scratch
 CONSOLIDATED_PLAN.md
