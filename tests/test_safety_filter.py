@@ -83,6 +83,60 @@ class TestSafeMessages:
 
 
 # ---------------------------------------------------------------------------
+# Small-talk (greeting/closing) tests
+# ---------------------------------------------------------------------------
+class TestSmallTalkDetection:
+    """Pure greetings/closings must be caught; real questions must NOT be."""
+
+    @pytest.mark.parametrize(
+        "message",
+        ["hi", "Hello", "hey", "hi there", "good morning", "HELLO!"],
+    )
+    def test_greeting_detected(self, message):
+        result = check_message(message)
+        assert result["smalltalk_response"] is not None
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "thanks",
+            "thank you",
+            "bye",
+            "I'm done, thanks for the help",
+            "I am done, thanks for the help",  # spelled-out "I am", not just "I'm"
+            "that's all, thanks",
+            "thanks I'm done, cool",  # "thanks" + "I'm done" combined, trailing filler
+            "gotcha",
+            "got it",
+            "sounds good",
+        ],
+    )
+    def test_closing_detected(self, message):
+        result = check_message(message)
+        assert result["smalltalk_response"] is not None
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "hi, how do I register for classes?",
+            "hello, what is the add/drop deadline?",
+            "thanks, but can you also tell me about financial aid?",
+            "How do I apply for financial aid?",
+            "I need a human",  # escalation intent must take priority, not smalltalk
+            # Deliberately NOT treated as closings — too commonly used as
+            # mid-conversation continuers, not an ending signal.
+            "ok",
+            "okay",
+            "cool",
+            "alright",
+        ],
+    )
+    def test_real_questions_not_treated_as_smalltalk(self, message):
+        result = check_message(message)
+        assert result["smalltalk_response"] is None
+
+
+# ---------------------------------------------------------------------------
 # Escalation tests
 # ---------------------------------------------------------------------------
 class TestEscalationDetection:

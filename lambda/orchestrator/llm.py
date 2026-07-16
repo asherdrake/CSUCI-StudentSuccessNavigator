@@ -48,6 +48,86 @@ def _get_model_id() -> str:
     return os.environ.get("MODEL_ID", _DEFAULT_MODEL_ID)
 
 
+def _guardrail_config() -> Optional[dict]:
+    """Return the Converse ``guardrailConfig`` block, or None if unconfigured.
+
+    Read at request time (like MODEL_ID). When ``GUARDRAIL_ID`` is unset the
+    tool-use call runs without a Bedrock Guardrail — the deterministic safety
+    filter and the grounding/citation checks still apply, so this degrades
+    gracefully in local/dev setups that have no guardrail provisioned.
+    """
+    guardrail_id = os.environ.get("GUARDRAIL_ID")
+    if not guardrail_id:
+        return None
+    return {
+        "guardrailIdentifier": guardrail_id,
+        "guardrailVersion": os.environ.get("GUARDRAIL_VERSION", "DRAFT"),
+        "trace": "enabled",
+    }
+
+
+def check_guardrail_only(text: str) -> dict:
+    """Run the Bedrock Guardrail against raw text via the standalone
+    ``ApplyGuardrail`` API, with no LLM call involved.
+
+    Used to check the student's raw message for content-safety issues
+    (denied topics, abusive language, etc.) before RAG retrieval / the
+    KB-relevance score floor gets a chance to short-circuit the request —
+    those are a separate, unrelated check and would otherwise prevent the
+    guardrail from ever seeing messages with a low KB-relevance score.
+
+    Args:
+        text: Raw text to check (typically the student's message).
+
+    Returns:
+        A dict with keys:
+            - ``intervened``: True if the guardrail acted on the text.
+            - ``action_reason``: Bedrock's ``actionReason`` string
+              (e.g. ``"Guardrail blocked."`` vs ``"...masked."``), empty
+              if the guardrail didn't intervene.
+            - ``blocked_message``: the guardrail's configured
+              blocked-message text, if it intervened with a block
+              (empty string otherwise).
+            - ``trace``: the raw assessment object for logging.
+
+    Note:
+        Failures here are swallowed (logged only) and treated as
+        "did not intervene" — this check is a pre-filter, not the sole
+        safety mechanism, and the existing Converse-call guardrail check
+        still runs downstream as a second layer.
+    """
+    guardrail_id = os.environ.get("GUARDRAIL_ID")
+    if not guardrail_id:
+        # No guardrail provisioned (e.g. local dev) — treat as not intervened.
+        return {"intervened": False, "action_reason": "", "blocked_message": "", "trace": {}}
+    try:
+        response = _get_client().apply_guardrail(
+            guardrailIdentifier=guardrail_id,
+            guardrailVersion=os.environ.get("GUARDRAIL_VERSION", "DRAFT"),
+            source="INPUT",
+            content=[{"text": {"text": text}}],
+        )
+    except Exception:
+        logger.exception("Standalone ApplyGuardrail check failed; treating as not intervened.")
+        return {"intervened": False, "action_reason": "", "blocked_message": "", "trace": {}}
+
+    intervened = response.get("action", "NONE") == "GUARDRAIL_INTERVENED"
+
+    blocked_message = ""
+    if intervened:
+        output_blocks = response.get("outputs", [])
+        blocked_message = "".join(
+            block.get("text", "") for block in output_blocks if "text" in block
+        ).strip()
+
+    return {
+        "intervened": intervened,
+        "action_reason": response.get("actionReason", ""),
+        "blocked_message": blocked_message,
+        "trace": response.get("assessments", []),
+    }
+
+
 def format_messages_for_converse(
     conversation_history: list[dict],
     current_user_message: str,
@@ -100,6 +180,10 @@ def invoke_model(
 ) -> list[dict]:
     """Invoke the model with forced tool-use and return the parsed tool calls.
 
+    When a Bedrock Guardrail is configured (``GUARDRAIL_ID`` /
+    ``GUARDRAIL_VERSION`` env vars) it is applied to this call's input and
+    output as a second content-safety layer.
+
     Note: no ``temperature`` — Claude Sonnet 5 on Bedrock rejects it as
     deprecated (ValidationException).
 
@@ -111,24 +195,27 @@ def invoke_model(
 
     Returns:
         A list of ``{"name": str, "input": dict}`` tool calls (possibly empty
-        if the model produced no usable tool call — the handler treats that as
-        a fail-safe escalation).
+        if the model produced no usable tool call, or if the guardrail blocked
+        the output — the handler treats an empty/unusable result as a fail-safe
+        escalation).
 
     Raises:
         Exception: Re-raised after logging if the Bedrock call itself fails
         (the handler maps this to HTTP 500, distinct from unusable output).
     """
     model_id = _get_model_id()
+    converse_kwargs: dict = {
+        "modelId": model_id,
+        "system": [{"text": system_prompt}],
+        "messages": messages,
+        "toolConfig": tool_config,
+        "inferenceConfig": {"maxTokens": max_tokens},
+    }
+    guardrail_config = _guardrail_config()
+    if guardrail_config is not None:
+        converse_kwargs["guardrailConfig"] = guardrail_config
     try:
-        response = _get_client().converse(
-            modelId=model_id,
-            system=[{"text": system_prompt}],
-            messages=messages,
-            toolConfig=tool_config,
-            inferenceConfig={
-                "maxTokens": max_tokens,
-            },
-        )
+        response = _get_client().converse(**converse_kwargs)
     except Exception:
         logger.exception(
             "Failed to invoke Bedrock model %s via Converse API.", model_id

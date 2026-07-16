@@ -16,11 +16,14 @@ htmlcov/
 
 # SAM build artifacts
 .aws-sam/
+infra/.aws-sam/
+
+# Node
+node_modules/
 
 # OS metadata
 .DS_Store
 Thumbs.db
-node_modules/
 
 # scratch
 CONSOLIDATED_PLAN.md

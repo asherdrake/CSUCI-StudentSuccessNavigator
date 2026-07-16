@@ -20,10 +20,13 @@ import sys
 import uuid
 from typing import Any, Dict, List, Optional
 
-# Make sure safety_filter and orchestrator modules are importable
-_PARENT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-if _PARENT_DIR not in sys.path:
-    sys.path.insert(0, _PARENT_DIR)
+# Make sure safety_filter (lambda/) and sibling orchestrator modules
+# (retriever, prompts, llm, router — lambda/orchestrator/) are importable
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_PARENT_DIR = os.path.join(_THIS_DIR, "..")
+for _path in (_PARENT_DIR, _THIS_DIR):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
 from safety_filter import check_message  # noqa: E402
 from retriever import retrieve_context  # noqa: E402
@@ -35,6 +38,7 @@ from prompts import (  # noqa: E402
     SYSTEM_PROMPT_TEMPLATE,
 )
 from llm import (  # noqa: E402
+    check_guardrail_only,
     format_messages_for_converse,
     invoke_model,
     translate_query_to_english,
@@ -69,6 +73,18 @@ def _debug_chunks_enabled() -> bool:
     flag before .env is loaded and always be False.
     """
     return os.environ.get("DEBUG_CHUNKS", "").lower() in ("1", "true", "yes")
+
+
+# Bedrock Guardrails has no native input length limit (confirmed against the
+# Converse API schema), so oversized input is rejected here before any
+# retrieval or Bedrock call is made, to save cost/latency.
+MAX_INPUT_LENGTH = 1000
+
+# Shown when a message exceeds MAX_INPUT_LENGTH (rendered as a clarify turn).
+INPUT_TOO_LONG_MESSAGE = (
+    "That message is a bit long — could you shorten it to a specific question? "
+    "I can help best with focused questions about CSUCI resources."
+)
 
 
 def _build_response(status_code: int, body: Dict[str, Any]) -> Dict[str, Any]:
@@ -180,6 +196,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     # auto-detect rule in charge, so any-language questions still work.
     language_code = body.get("language", "en")
 
+    # retrieved_chunks is referenced by respond()'s debug branch and by the
+    # early exits below (crisis/length/small-talk/guardrail), so it must exist
+    # before the first respond() call. Real retrieval happens in Section 3.
+    retrieved_chunks: List[dict] = []
+
     def respond(
         rtype: str,
         rmessage: str,
@@ -211,14 +232,58 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             response_body["debug"] = {"retrieved_chunks": retrieved_chunks}
         return _build_response(200, response_body)
 
+    # --- 1b. Input Length Guard (before any retrieval/Bedrock calls) ---
+    # Bedrock Guardrails has no native input length limit, so oversized input
+    # is rejected here (as a clarify turn) before any retrieval/Bedrock call.
+    if len(message) > MAX_INPUT_LENGTH:
+        logger.warning("Input length guard tripped (length=%d).", len(message))
+        return respond("clarify", INPUT_TOO_LONG_MESSAGE)
+
     # --- 2. Crisis Check (deterministic, highest priority, pre-model) ---
     safety_result = check_message(message)
     if safety_result["crisis"]:
         logger.warning("Crisis detected - bypassing LLM.")
-        retrieved_chunks: List[dict] = []
         return respond("crisis", safety_result["crisis_response"])
 
     user_requested_human = safety_result["escalation"]["needed"]
+
+    # --- 2a. Small-Talk Check (greetings/closings — before retrieval) ---
+    # Pure greetings ("hi") and closings ("thanks, I'm done") aren't real
+    # questions and would waste a retrieval + model round-trip. Answer them
+    # here with a canned, friendly response before any Bedrock call.
+    if safety_result.get("smalltalk_response"):
+        return respond("answer", safety_result["smalltalk_response"], citations=None)
+
+    # --- 2b. Guardrail Check on Raw Message (before retrieval) ---
+    # Runs the Bedrock Guardrail directly on the raw message first, so
+    # denied-topic / content-policy blocks apply regardless of whether the
+    # message would have retrieved any relevant CSUCI passages. (No-ops when
+    # no guardrail is configured.) A hard block short-circuits as a decline;
+    # a masked-only intervention (e.g. PII redaction) falls through unchanged.
+    early_guardrail_result = check_guardrail_only(message)
+    logger.info(
+        "GUARDRAIL_CHECK_EARLY: sessionId=%s intervened=%s",
+        session_id,
+        early_guardrail_result["intervened"],
+    )
+    if early_guardrail_result["intervened"]:
+        logger.warning(
+            "GUARDRAIL_INTERVENED_EARLY: sessionId=%s trace=%s",
+            session_id,
+            json.dumps(early_guardrail_result["trace"], default=str),
+        )
+        is_masked_only = (
+            "masked" in early_guardrail_result["action_reason"].lower()
+            and "blocked" not in early_guardrail_result["action_reason"].lower()
+        )
+        if not is_masked_only and early_guardrail_result["blocked_message"]:
+            return respond(
+                "decline",
+                early_guardrail_result["blocked_message"],
+                log={"status": "guardrail_blocked_early"},
+            )
+        # Masked-only (e.g. PII in the raw message itself): not a block,
+        # fall through to the normal pipeline unchanged.
 
     # --- 3. RAG Retrieval (always — no score-floor short-circuit) ---
     # The KB is English: translate Spanish-mode queries before vector search.
@@ -266,6 +331,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             {"error": "Sorry, I am having trouble connecting to Bedrock. Please try again later."},
         )
 
+    # Note: when a Bedrock Guardrail blocks the model's OUTPUT during the
+    # Converse call, no valid tool call is produced, so tool_calls is empty
+    # and the request safely falls through to fail_safe() below (human
+    # handoff). Input content-safety is handled earlier by the standalone
+    # early guardrail check (Section 2b).
     common_log = {
         "chunks_returned": len(retrieved_chunks),
         "top_score": top_score,

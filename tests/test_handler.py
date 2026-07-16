@@ -19,7 +19,28 @@ in test_llm.py). These tests cover policy dispatch and the API contract:
 import json
 from unittest.mock import patch
 
+import pytest
+
 from handler import lambda_handler
+
+
+@pytest.fixture(autouse=True)
+def _guardrail_not_intervened():
+    """The handler runs a Bedrock Guardrail input check on every non-crisis
+    request. Default it to "not intervened" so the tool-use tests below never
+    attempt a real AWS call; the guardrail-specific tests patch it explicitly.
+    """
+    with patch(
+        "handler.check_guardrail_only",
+        return_value={
+            "intervened": False,
+            "action_reason": "",
+            "blocked_message": "",
+            "trace": {},
+        },
+    ):
+        yield
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -550,3 +571,109 @@ class TestInfraErrors:
         body = json.loads(response["body"])
         assert "error" in body
         assert "escalation" not in body
+
+
+# ---------------------------------------------------------------------------
+# Input length guard (merged from guardrails, adapted to the new contract)
+# ---------------------------------------------------------------------------
+
+
+@patch("handler.invoke_model")
+@patch("handler.retrieve_context")
+@patch("handler.check_message")
+class TestInputLengthGuard:
+    def test_oversized_message_clarifies_before_any_bedrock_call(
+        self, mock_check, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = SAFE
+        body = _body(lambda_handler(_event("x " * 800), None))  # > 1000 chars
+
+        assert body["type"] == "clarify"
+        assert "shorten" in body["message"]
+        # Runs before crisis/retrieval/model — none of those should fire.
+        mock_check.assert_not_called()
+        mock_retrieve.assert_not_called()
+        mock_invoke.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Small-talk (merged from guardrails, adapted to the new contract)
+# ---------------------------------------------------------------------------
+
+SMALLTALK = {
+    "safe": True,
+    "crisis": False,
+    "crisis_response": None,
+    "escalation": {"needed": False, "category": None},
+    "smalltalk_response": "Hi there! 👋 Ask me anything about CSUCI.",
+}
+
+
+@patch("handler.invoke_model")
+@patch("handler.retrieve_context")
+@patch("handler.check_message")
+class TestSmallTalk:
+    def test_greeting_answers_without_retrieval_or_model(
+        self, mock_check, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = SMALLTALK
+
+        body = _body(lambda_handler(_event("hi"), None))
+
+        assert body["type"] == "answer"
+        assert body["message"] == SMALLTALK["smalltalk_response"]
+        assert "citations" not in body
+        assert "escalation" not in body
+        mock_retrieve.assert_not_called()
+        mock_invoke.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Early Bedrock Guardrail check on the raw message (merged from guardrails)
+# ---------------------------------------------------------------------------
+
+
+@patch("handler.invoke_model")
+@patch("handler.retrieve_context")
+@patch("handler.check_guardrail_only")
+@patch("handler.check_message")
+class TestEarlyGuardrail:
+    def test_hard_block_declines_before_retrieval_or_model(
+        self, mock_check, mock_guardrail, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = SAFE
+        mock_guardrail.return_value = {
+            "intervened": True,
+            "action_reason": "Guardrail blocked.",
+            "blocked_message": "I can't help with that. Let's keep it focused on CSUCI.",
+            "trace": {"contentPolicy": {"filters": [{"type": "INSULTS"}]}},
+        }
+
+        body = _body(lambda_handler(_event("you are an idiot"), None))
+
+        assert body["type"] == "decline"
+        assert body["message"] == "I can't help with that. Let's keep it focused on CSUCI."
+        mock_retrieve.assert_not_called()
+        mock_invoke.assert_not_called()
+
+    def test_masked_only_continues_to_retrieval_and_model(
+        self, mock_check, mock_guardrail, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = SAFE
+        # PII masking, not a hard block — must NOT short-circuit.
+        mock_guardrail.return_value = {
+            "intervened": True,
+            "action_reason": "No action.\nGuardrail masked.",
+            "blocked_message": "",
+            "trace": {},
+        }
+        mock_retrieve.return_value = CHUNKS
+        mock_invoke.return_value = [_answer_call()]
+
+        body = _body(
+            lambda_handler(_event("my email is a@b.com, how do I register?"), None)
+        )
+
+        assert body["type"] == "answer"
+        mock_retrieve.assert_called_once()
+        mock_invoke.assert_called_once()
