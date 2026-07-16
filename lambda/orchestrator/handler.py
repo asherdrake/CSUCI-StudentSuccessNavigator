@@ -185,6 +185,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     # Client-passed multi-turn history & session identifier
     history: List[dict] = body.get("history", [])
     session_id: str = body.get("sessionId") or str(uuid.uuid4())
+    language_code = body.get("language", "en")
+    target_language = "Spanish" if language_code == "es" else "English"
 
     # --- 2. Crisis Check (Highest Priority pre-model filter) ---
     safety_result = check_message(message)
@@ -294,7 +296,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     formatted_chunks = _format_retrieved_chunks(retrieved_chunks)
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         retrieved_chunks=formatted_chunks,
-        conversation_history="(Conversation history managed client-side.)"
+        conversation_history="(Conversation history managed client-side.)",
+        target_language=target_language
     )
 
     # --- 6. Invoke LLM (Claude 3.5 Sonnet, temp=0.2) ---

@@ -14,7 +14,6 @@ Environment variables
 
 import logging
 import os
-
 import boto3
 
 logger = logging.getLogger(__name__)

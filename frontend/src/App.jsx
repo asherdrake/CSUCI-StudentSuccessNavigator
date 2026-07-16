@@ -19,6 +19,7 @@ function App() {
   const [sessionId, setSessionId] = useState(null);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [language, setLanguage] = useState('en');
 
   // Floating bubble draggable coordinates
   const [bubblePos, setBubblePos] = useState({
@@ -210,7 +211,8 @@ function App() {
         body: JSON.stringify({
           message: userQuery,
           history: history,
-          sessionId: sessionId
+          sessionId: sessionId,
+          language: language
         })
       });
 
@@ -323,6 +325,26 @@ function App() {
               <h2 className="gemini-greeting">I&apos;m Ekho, how may I help you today?</h2>
               
               <form onSubmit={handleSubmit} className="gemini-pill-input-box">
+                <select 
+                  value={language} 
+                  onChange={(e) => setLanguage(e.target.value)} 
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: 'var(--csuci-dark)',
+                    fontSize: '13px',
+                    padding: '0 8px',
+                    marginRight: '8px',
+                    borderRight: '1px solid var(--csuci-border)',
+                    outline: 'none',
+                    cursor: 'pointer',
+                    fontWeight: 'bold',
+                    fontFamily: 'inherit'
+                  }}
+                >
+                  <option value="en">🇺🇸 EN</option>
+                  <option value="es">🇪🇸 ES</option>
+                </select>
                 <input
                   type="text"
                   value={input}
@@ -441,6 +463,26 @@ function App() {
             {/* Bottom input text bar */}
             <div className="chat-bottom-input-bar">
               <form onSubmit={handleSubmit} className="gemini-pill-input-box">
+                <select 
+                  value={language} 
+                  onChange={(e) => setLanguage(e.target.value)} 
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: 'var(--csuci-dark)',
+                    fontSize: '13px',
+                    padding: '0 8px',
+                    marginRight: '8px',
+                    borderRight: '1px solid var(--csuci-border)',
+                    outline: 'none',
+                    cursor: 'pointer',
+                    fontWeight: 'bold',
+                    fontFamily: 'inherit'
+                  }}
+                >
+                  <option value="en">🇺🇸 EN</option>
+                  <option value="es">🇪🇸 ES</option>
+                </select>
                 <input
                   type="text"
                   value={input}

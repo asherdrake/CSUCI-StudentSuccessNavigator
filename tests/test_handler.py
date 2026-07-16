@@ -98,6 +98,44 @@ class TestValidMessage:
         ]
         assert parsed["body"]["escalation"] is None
 
+    @patch("handler.translate_query_to_english")
+    @patch("handler.invoke_model")
+    @patch("handler.retrieve_context")
+    @patch("handler.check_message")
+    def test_returns_200_with_spanish_language_preference(
+        self, mock_check, mock_retrieve, mock_invoke, mock_translate
+    ):
+        # Mock translate
+        mock_translate.return_value = "library"
+        # Safety filter — safe message
+        mock_check.return_value = {
+            "safe": True,
+            "crisis": False,
+            "crisis_response": None,
+            "escalation": {"needed": False, "category": None},
+        }
+        # Retriever
+        mock_retrieve.return_value = [
+            {
+                "text": "Registration opens March 1.",
+                "source_url": "https://csuci.edu/registration",
+                "source_title": "Registration Info",
+                "score": 0.9,
+            }
+        ]
+        # LLM
+        mock_invoke.return_value = "La biblioteca está abierta. Ver https://csuci.edu/registration"
+
+        event = _apigw_event({"message": "biblioteca", "language": "es"})
+        from handler import lambda_handler
+
+        response = lambda_handler(event, {})
+        parsed = _parse_response(response)
+
+        assert parsed["status"] == 200
+        assert parsed["body"]["answered"] is True
+        assert "La biblioteca está abierta." in parsed["body"]["answer"]
+
 
 # ---------------------------------------------------------------------------
 # Tests — crisis messages
