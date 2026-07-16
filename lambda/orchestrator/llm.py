@@ -30,6 +30,15 @@ logger.setLevel(logging.INFO)
 
 _DEFAULT_MODEL_ID = "us.anthropic.claude-sonnet-5"
 
+# Fast/cheap model used for the auxiliary query-rewriting and translation
+# steps (not the main tool-use decision). Override with REWRITE_MODEL_ID.
+_DEFAULT_REWRITE_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
+# How many trailing history turns to feed the query-contextualizer. A couple
+# of exchanges is plenty to resolve "that"/"the completion degree version"
+# style references without bloating the prompt.
+_CONTEXTUALIZE_HISTORY_TURNS = 6
+
 # Lazy-initialised client
 _client = None
 
@@ -46,6 +55,15 @@ def _get_client():
 def _get_model_id() -> str:
     """Read MODEL_ID at request time so dev_server's late load_env() works."""
     return os.environ.get("MODEL_ID", _DEFAULT_MODEL_ID)
+
+
+def _get_rewrite_model_id() -> str:
+    """Model for auxiliary rewrite/translation calls (read at request time).
+
+    Defaults to a fast, cheap Haiku profile. Falls back to MODEL_ID only if
+    someone explicitly sets REWRITE_MODEL_ID to an empty string.
+    """
+    return os.environ.get("REWRITE_MODEL_ID") or _DEFAULT_REWRITE_MODEL_ID
 
 
 def _guardrail_config() -> Optional[dict]:
@@ -231,6 +249,79 @@ def invoke_model(
     )
 
     return extract_tool_calls(response)
+
+
+_CONTEXTUALIZE_SYSTEM_PROMPT = (
+    "You rewrite a student's latest message into a single standalone search "
+    "query for a university knowledge base. Use the conversation so far to "
+    "resolve references such as 'that', 'it', 'the completion degree version', "
+    "pronouns, and dropped subjects, so the query stands on its own without the "
+    "conversation. Carry over the specific program, degree, department, or topic "
+    "names from earlier turns whenever the latest message refers to them "
+    "implicitly. Do NOT answer the question or add information that is not "
+    "implied by the conversation. Output ONLY the rewritten search query as "
+    "plain text — no quotes, no labels, no explanation. If the latest message "
+    "is already self-contained, output it unchanged."
+)
+
+
+def contextualize_query(history: list[dict], message: str) -> str:
+    """Rewrite a follow-up message into a standalone retrieval query.
+
+    Vector search embeds only the query text, so a follow-up like "yes, I want
+    that completion degree version" retrieves generically (any "completion
+    degree" chunk) because the topic from earlier turns is absent. This uses a
+    fast model to fold the recent conversation back into a self-contained query
+    before retrieval — the generation model still gets the full history
+    separately.
+
+    Args:
+        history: Prior turns as ``[{"role": ..., "content": ...}, ...]``.
+        message: The student's current message.
+
+    Returns:
+        A standalone search query. On empty history or ANY failure, returns the
+        original ``message`` unchanged — retrieval degrades to the old behavior,
+        nothing breaks.
+    """
+    if not history:
+        return message
+
+    recent = history[-_CONTEXTUALIZE_HISTORY_TURNS:]
+    transcript_lines: list[str] = []
+    for turn in recent:
+        role = turn.get("role", "user")
+        speaker = "Assistant" if role == "assistant" else "Student"
+        content = (turn.get("content") or "").strip()
+        if content:
+            transcript_lines.append(f"{speaker}: {content}")
+
+    if not transcript_lines:
+        return message
+
+    transcript = "\n".join(transcript_lines)
+    user_text = (
+        f"Conversation so far:\n{transcript}\n\n"
+        f"Latest message: {message}\n\n"
+        "Rewrite the latest message as a standalone search query."
+    )
+
+    try:
+        response = _get_client().converse(
+            modelId=_get_rewrite_model_id(),
+            system=[{"text": _CONTEXTUALIZE_SYSTEM_PROMPT}],
+            messages=[{"role": "user", "content": [{"text": user_text}]}],
+            inferenceConfig={"maxTokens": 128},
+        )
+        blocks = response.get("output", {}).get("message", {}).get("content", [])
+        rewritten = "".join(b.get("text", "") for b in blocks if "text" in b)
+        rewritten = rewritten.strip().strip('"').strip("'").strip()
+        return rewritten or message
+    except Exception:
+        logger.warning(
+            "Query contextualization failed, falling back to original message."
+        )
+        return message
 
 
 def translate_query_to_english(query: str) -> str:

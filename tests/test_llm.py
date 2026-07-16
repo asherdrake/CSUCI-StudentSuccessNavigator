@@ -8,7 +8,14 @@ Covers the two jobs the module owns:
      (one tool, or the single allowed answer+escalate pair).
 """
 
-from llm import extract_tool_calls, format_messages_for_converse, validate_decision
+from unittest.mock import MagicMock, patch
+
+from llm import (
+    contextualize_query,
+    extract_tool_calls,
+    format_messages_for_converse,
+    validate_decision,
+)
 from tools import ANSWER_TOOL, CLARIFY_TOOL, DECLINE_TOOL, ESCALATE_TOOL
 
 
@@ -204,3 +211,66 @@ class TestFormatMessages:
     def test_empty_history(self):
         messages = format_messages_for_converse([], "Hello")
         assert messages == [{"role": "user", "content": [{"text": "Hello"}]}]
+
+
+class TestContextualizeQuery:
+    def test_empty_history_returns_message_without_llm_call(self):
+        with patch("llm._get_client") as mock_client:
+            result = contextualize_query([], "the completion degree version")
+        assert result == "the completion degree version"
+        mock_client.assert_not_called()
+
+    def test_history_only_whitespace_returns_message_without_llm_call(self):
+        history = [{"role": "assistant", "content": "   "}]
+        with patch("llm._get_client") as mock_client:
+            result = contextualize_query(history, "tell me more")
+        assert result == "tell me more"
+        mock_client.assert_not_called()
+
+    def test_rewrites_followup_using_history(self):
+        history = [
+            {"role": "user", "content": "CS degree lower division requirements?"},
+            {"role": "assistant", "content": "Here are the on-campus CS requirements..."},
+        ]
+        mock_client = MagicMock()
+        mock_client.converse.return_value = {
+            "output": {
+                "message": {
+                    "content": [
+                        {"text": "Computer Science B.S. Completion Degree requirements"}
+                    ]
+                }
+            }
+        }
+        with patch("llm._get_client", return_value=mock_client):
+            result = contextualize_query(history, "yes, the completion degree version")
+        assert result == "Computer Science B.S. Completion Degree requirements"
+        mock_client.converse.assert_called_once()
+
+    def test_strips_surrounding_quotes_from_rewrite(self):
+        history = [{"role": "user", "content": "prior turn"}]
+        mock_client = MagicMock()
+        mock_client.converse.return_value = {
+            "output": {"message": {"content": [{"text": '"CS completion degree"'}]}}
+        }
+        with patch("llm._get_client", return_value=mock_client):
+            result = contextualize_query(history, "that one")
+        assert result == "CS completion degree"
+
+    def test_falls_back_to_message_on_error(self):
+        history = [{"role": "user", "content": "prior turn"}]
+        mock_client = MagicMock()
+        mock_client.converse.side_effect = RuntimeError("boom")
+        with patch("llm._get_client", return_value=mock_client):
+            result = contextualize_query(history, "that one")
+        assert result == "that one"
+
+    def test_empty_rewrite_falls_back_to_message(self):
+        history = [{"role": "user", "content": "prior turn"}]
+        mock_client = MagicMock()
+        mock_client.converse.return_value = {
+            "output": {"message": {"content": [{"text": "   "}]}}
+        }
+        with patch("llm._get_client", return_value=mock_client):
+            result = contextualize_query(history, "that one")
+        assert result == "that one"

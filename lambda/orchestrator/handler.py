@@ -39,6 +39,7 @@ from prompts import (  # noqa: E402
 )
 from llm import (  # noqa: E402
     check_guardrail_only,
+    contextualize_query,
     format_messages_for_converse,
     invoke_model,
     translate_query_to_english,
@@ -286,14 +287,20 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # fall through to the normal pipeline unchanged.
 
     # --- 3. RAG Retrieval (always — no score-floor short-circuit) ---
-    # The KB is English: translate Spanish-mode queries before vector search.
+    # Fold recent conversation into a standalone query first, so follow-ups
+    # ("yes, the completion degree version") retrieve on the topic established
+    # earlier instead of on the bare words in the current message. The KB is
+    # English, so Spanish-mode queries are then translated for vector search.
+    search_query = contextualize_query(history, message)
+    if search_query != message:
+        logger.info(
+            "Contextualized query: '%s' -> '%s'", message, search_query
+        )
     if language_code == "es":
-        search_query = translate_query_to_english(message)
+        search_query = translate_query_to_english(search_query)
         logger.info(
             "Original query: '%s' -> Search query: '%s'", message, search_query
         )
-    else:
-        search_query = message
 
     retrieved_chunks = retrieve_context(search_query, top_k=5)
     top_score = retrieved_chunks[0]["score"] if retrieved_chunks else 0.0
