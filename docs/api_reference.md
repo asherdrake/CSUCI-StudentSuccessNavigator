@@ -6,182 +6,133 @@ Base URL (after deployment):
 https://<api-id>.execute-api.us-west-2.amazonaws.com/prod
 ```
 
+Local development: `http://localhost:8000/chat` (via `scratch/dev_server.py`).
+
 ---
 
 ## `POST /chat`
 
-Send a student message and receive an AI-generated answer grounded in CSUCI documents.
+Send a student message and receive a **type-discriminated** response. The
+`type` field says what kind of turn this is; `message` is always the
+student-facing text; `citations` and `escalation` are structured sidecars
+that are present only when relevant.
 
 ### Request
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `message` | string | **Yes** | The student's question (1–2 000 characters). |
-| `sessionId` | string | No | UUID of an existing conversation session. Omit to start a new session. |
+| `message` | string | **Yes** | The student's question. |
+| `history` | array | No | Prior turns, each `{"role": "user"\|"assistant", "content": "..."}`. Conversation state is client-managed. |
+| `sessionId` | string | No | UUID of an existing conversation. Omit to start a new one. |
 
-**Headers:**
-
-| Header | Value |
-|---|---|
-| `Content-Type` | `application/json` |
+**Headers:** `Content-Type: application/json`
 
 **Example:**
 
 ```json
 {
   "message": "How do I register for classes?",
+  "history": [],
   "sessionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 }
 ```
 
 ---
 
-### Response — Success (200)
+### Response shape (200)
 
-```json
+```jsonc
 {
-  "answer": "You can register for classes through the myCI portal at https://myci.csuci.edu. Registration dates vary by class standing...",
-  "sources": [
-    "CSUCI_Catalog_2025.pdf",
-    "Registration_Guide.pdf"
-  ],
-  "sessionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "type": "normal"
+  "type": "answer" | "clarify" | "escalate" | "decline" | "crisis",
+  "message": "student-facing text (always present)",
+  "citations": [ { "title": "...", "url": "...", "passages": [1, 3] } ],  // type=answer only
+  "escalation": {                    // present for escalate, or answer+escalation pairs
+    "office": "Financial Aid",
+    "contact": { "phone": "...", "url": "...", "location": "...", "map_url": "..." },
+    "ticket_draft": { "summary": "...", "raw_message": "...", "office": "...", "sessionId": "..." }
+  },
+  "sessionId": "...",
+  "debug": { "retrieved_chunks": [...] }   // only when DEBUG_CHUNKS=1 on the backend
 }
 ```
 
-| Field | Type | Description |
-|---|---|---|
-| `answer` | string | The AI-generated answer, grounded in retrieved documents. |
-| `sources` | string[] | List of source document names used to generate the answer. |
-| `sessionId` | string | Session UUID (new or existing). Pass this back to continue the conversation. |
-| `type` | string | Response type: `"normal"`, `"crisis"`, or `"escalation"`. |
+Rendering rule for clients: **render `message`; if `citations` is present,
+render the source list; if `escalation` is present, render the handoff card.**
+No other branching is needed — the answer+human pair is just an `answer` that
+also carries `escalation`.
 
----
+### The five types
 
-### Response — Crisis (200)
+| `type` | Meaning | `citations` | `escalation` |
+|---|---|---|---|
+| `answer` | Grounded answer from the knowledge base | yes | only when the student also needs/requested a human |
+| `clarify` | The question was ambiguous; `message` is one clarifying question | no | no |
+| `escalate` | A human is needed; `message` is a short lead-in | no | yes |
+| `decline` | Out of scope for a CSUCI assistant; `message` is a standard decline | no | no |
+| `crisis` | Crisis language detected; `message` is the hotline response (LLM bypassed) | no | no |
 
-Returned when the safety filter detects crisis language (e.g., self-harm, suicide).
+### Inline citations
 
-```json
-{
-  "answer": "I'm really concerned about what you've shared. Please reach out to the 988 Suicide and Crisis Lifeline by calling or texting 988. You can also contact CSUCI CAPS at (805) 437-2088. You are not alone.",
-  "sources": [],
-  "sessionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "type": "crisis"
-}
-```
-
-> **Note:** Crisis responses bypass the LLM entirely and return a pre-defined message with professional resources.
-
----
-
-### Response — Escalation (200)
-
-Returned when the student requests a human advisor.
-
-```json
-{
-  "answer": "I'll connect you with a human advisor. A staff member has been notified and will reach out to you shortly. In the meantime, you can contact the Advising Center at (805) 437-8500 or visit Bell Tower 1548.",
-  "sources": [],
-  "sessionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "type": "escalation"
-}
-```
+Answers embed passage markers like `[1]` after each claim. Each entry in
+`citations` lists which passage numbers (`passages`) resolve to that source,
+so clients can turn `[N]` markers into links. The model never authors URLs —
+all URLs come from retrieved knowledge-base metadata, resolved server-side.
 
 ---
 
 ### Response — Error (400)
 
-Missing or invalid `message` field.
-
 ```json
-{
-  "error": "Missing required field: message",
-  "statusCode": 400
-}
+{ "error": "Missing required field: 'message'." }
 ```
 
 ### Response — Error (500)
 
-Internal server error (e.g., Bedrock timeout).
+Infrastructure failure (Bedrock timeout/throttle). Retryable — distinct from
+an escalation, which is a *successful* response with `type: "escalate"`.
 
 ```json
-{
-  "error": "An internal error occurred. Please try again later.",
-  "statusCode": 500
-}
+{ "error": "Sorry, I am having trouble connecting to Bedrock. Please try again later." }
 ```
 
 ---
 
-## Example `curl` Commands
-
-### Normal query
+## Example `curl` commands
 
 ```bash
-curl -X POST \
-  https://<api-id>.execute-api.us-west-2.amazonaws.com/prod/chat \
+# Normal query
+curl -X POST https://<api-id>.execute-api.us-west-2.amazonaws.com/prod/chat \
   -H "Content-Type: application/json" \
   -d '{"message": "How do I register for classes?"}'
-```
 
-### Continue a session
-
-```bash
-curl -X POST \
-  https://<api-id>.execute-api.us-west-2.amazonaws.com/prod/chat \
+# Continue a conversation (history is client-managed)
+curl -X POST https://<api-id>.execute-api.us-west-2.amazonaws.com/prod/chat \
   -H "Content-Type: application/json" \
   -d '{
     "message": "What about the add/drop deadline?",
+    "history": [
+      {"role": "user", "content": "How do I register for classes?"},
+      {"role": "assistant", "content": "You can register through myCI [1]..."}
+    ],
     "sessionId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
   }'
-```
-
-### Crisis message
-
-```bash
-curl -X POST \
-  https://<api-id>.execute-api.us-west-2.amazonaws.com/prod/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "I want to hurt myself"}'
 ```
 
 ---
 
 ## CORS
 
-The API is configured with the following CORS headers:
-
 | Header | Value |
 |---|---|
 | `Access-Control-Allow-Origin` | `*` |
-| `Access-Control-Allow-Headers` | `Content-Type, Authorization` |
+| `Access-Control-Allow-Headers` | `Content-Type, Authorization, X-Amz-Date, X-Api-Key` |
 | `Access-Control-Allow-Methods` | `POST, OPTIONS` |
 
-The `OPTIONS` pre-flight request is handled automatically by API Gateway.
-
-> **Production hardening:** Replace `*` with your frontend domain (e.g., `https://navigator.csuci.edu`).
-
----
-
-## Rate Limiting
-
-API Gateway applies the following default throttling:
-
-| Limit | Value |
-|---|---|
-| Steady-state rate | 10 000 requests/second |
-| Burst | 5 000 requests |
-
-For the student navigator, these defaults are more than sufficient. To add per-user rate limiting, configure a **Usage Plan** and **API Key** in the SAM template.
+> **Production hardening:** Replace `*` with your frontend domain.
 
 ---
 
 ## Authentication (Future)
 
-The current deployment does **not** require authentication. Planned enhancements:
-
-1. **CSUCI SSO** — Integrate with the university's SAML/OIDC identity provider.
-2. **API Key** — Issue keys to the frontend for basic access control.
-3. **Cognito** — Add user pools for session-aware features (e.g., personalized advising).
+The current deployment does **not** require authentication. Planned:
+CSUCI SSO (SAML/OIDC), API keys, or Cognito user pools.

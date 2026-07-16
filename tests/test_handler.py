@@ -1,440 +1,488 @@
 """
-Tests for the Lambda orchestrator handler.
+Unit tests for the Lambda orchestrator handler (tool-use contract).
 
-Covers:
-  - Valid message → returns answered: True, citations, escalation: null
-  - Crisis message → returns crisis response, answered: True, bypasses LLM
-  - Missing message field → 400 error
-  - Empty body → 400 error
-  - Low retrieval score → answered: False, bypasses LLM, triggers escalation
-  - LLM NO_ANSWER sentinel → answered: False, triggers escalation
-  - Citation validation failure → answered: False, triggers escalation
-  - Escalation intent (user requested) → answered: True, appends escalation payload
+The LLM is mocked at the invoke_model seam: it returns parsed
+[{"name": ..., "input": ...}] tool calls (llm.py owns Converse parsing, tested
+in test_llm.py). These tests cover policy dispatch and the API contract:
+
+  - answer            → type "answer", passage numbers resolved to sources
+  - clarify           → type "clarify", question as message
+  - escalate          → type "escalate", contact card + ticket from reason
+  - decline           → type "decline", canned message (model text internal)
+  - answer + escalate → the one allowed pair
+  - crisis            → type "crisis", pre-model bypass
+  - fail-safe policy  → unusable output routes to general_support
+  - backstop          → explicit human request always yields an escalation
+  - infra errors      → HTTP 500, not an escalation
 """
 
 import json
-import os
-import sys
 from unittest.mock import patch
 
-import pytest
-
-# Ensure the Lambda orchestrator source is on the path
-sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__), "..", "lambda", "orchestrator")
-)
-sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__), "..", "lambda")
-)
-
+from handler import lambda_handler
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _apigw_event(body: dict) -> dict:
-    """Build a minimal API Gateway proxy integration event."""
+
+SAFE = {
+    "safe": True,
+    "crisis": False,
+    "crisis_response": None,
+    "escalation": {"needed": False, "category": None},
+}
+
+WANTS_HUMAN = {
+    "safe": True,
+    "crisis": False,
+    "crisis_response": None,
+    "escalation": {"needed": True, "category": "academic_advising"},
+}
+
+CHUNKS = [
+    {
+        "text": "Registration opens March 1 through myCI.",
+        "source_url": "https://csuci.edu/registration",
+        "source_title": "Registration Guide",
+        "score": 0.82,
+    },
+    {
+        "text": "The FAFSA school code is 039803.",
+        "source_url": "https://csuci.edu/fafsa",
+        "source_title": "FAFSA Info",
+        "score": 0.71,
+    },
+    {
+        "text": "Registration dates are listed in the academic calendar.",
+        "source_url": "https://csuci.edu/registration",
+        "source_title": "Registration Guide",
+        "score": 0.65,
+    },
+]
+
+
+def _event(message="How do I register?", history=None, session_id="sess-1"):
     return {
         "httpMethod": "POST",
-        "path": "/chat",
-        "headers": {"Content-Type": "application/json"},
-        "body": json.dumps(body),
-        "isBase64Encoded": False,
-        "requestContext": {},
-        "pathParameters": None,
-        "queryStringParameters": None,
+        "body": json.dumps(
+            {"message": message, "history": history or [], "sessionId": session_id}
+        ),
     }
 
 
-def _parse_response(response: dict) -> dict:
-    """Parse the statusCode and JSON body from a Lambda proxy response."""
+def _body(response):
+    assert response["statusCode"] == 200, response
+    return json.loads(response["body"])
+
+
+def _answer_call(answer="Register via myCI starting March 1 [1].", citations=None):
     return {
-        "status": response["statusCode"],
-        "body": json.loads(response["body"]),
+        "name": "answer_from_context",
+        "input": {"answer": answer, "citations": citations if citations is not None else [1]},
     }
 
 
-# ---------------------------------------------------------------------------
-# Tests — valid messages
-# ---------------------------------------------------------------------------
-class TestValidMessage:
-    """A well-formed message should return an answer and sources."""
+def _escalate_call(office="advising", reason="Student asked for an advisor."):
+    return {"name": "escalate_to_office", "input": {"office": office, "reason": reason}}
 
-    @patch("handler.invoke_model")
-    @patch("handler.retrieve_context")
-    @patch("handler.check_message")
-    def test_returns_200_with_answer(
+
+# ---------------------------------------------------------------------------
+# Answer path
+# ---------------------------------------------------------------------------
+
+
+@patch("handler.invoke_model")
+@patch("handler.retrieve_context")
+@patch("handler.check_message")
+class TestAnswerPath:
+    def test_answer_resolves_passage_numbers_to_sources(
         self, mock_check, mock_retrieve, mock_invoke
     ):
-        # Safety filter — safe message
-        mock_check.return_value = {
-            "safe": True,
-            "crisis": False,
-            "crisis_response": None,
-            "escalation": {"needed": False, "category": None},
-        }
-        # Retriever
-        mock_retrieve.return_value = [
+        mock_check.return_value = SAFE
+        mock_retrieve.return_value = CHUNKS
+        mock_invoke.return_value = [_answer_call(citations=[1, 2])]
+
+        body = _body(lambda_handler(_event(), None))
+
+        assert body["type"] == "answer"
+        assert "March 1" in body["message"]
+        assert body["citations"] == [
+            {"title": "Registration Guide", "url": "https://csuci.edu/registration", "passages": [1]},
+            {"title": "FAFSA Info", "url": "https://csuci.edu/fafsa", "passages": [2]},
+        ]
+        assert "escalation" not in body
+
+    def test_duplicate_sources_dedupe_and_merge_passages(
+        self, mock_check, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = SAFE
+        mock_retrieve.return_value = CHUNKS
+        # Passages 1 and 3 share the same source URL+title.
+        mock_invoke.return_value = [_answer_call(citations=[1, 3])]
+
+        body = _body(lambda_handler(_event(), None))
+
+        assert body["citations"] == [
+            {"title": "Registration Guide", "url": "https://csuci.edu/registration", "passages": [1, 3]},
+        ]
+
+    def test_answered_flag_is_gone(self, mock_check, mock_retrieve, mock_invoke):
+        mock_check.return_value = SAFE
+        mock_retrieve.return_value = CHUNKS
+        mock_invoke.return_value = [_answer_call()]
+
+        body = _body(lambda_handler(_event(), None))
+        assert "answered" not in body
+        assert "answer" not in body  # old field name; text is in "message"
+
+    def test_session_id_passthrough(self, mock_check, mock_retrieve, mock_invoke):
+        mock_check.return_value = SAFE
+        mock_retrieve.return_value = CHUNKS
+        mock_invoke.return_value = [_answer_call()]
+
+        body = _body(lambda_handler(_event(session_id="my-session"), None))
+        assert body["sessionId"] == "my-session"
+
+
+# ---------------------------------------------------------------------------
+# The allowed pair: answer + escalate
+# ---------------------------------------------------------------------------
+
+
+@patch("handler.invoke_model")
+@patch("handler.retrieve_context")
+@patch("handler.check_message")
+class TestAnswerEscalatePair:
+    def test_pair_returns_answer_with_escalation_sidecar(
+        self, mock_check, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = SAFE
+        mock_retrieve.return_value = CHUNKS
+        mock_invoke.return_value = [_answer_call(), _escalate_call(office="advising")]
+
+        body = _body(lambda_handler(_event(), None))
+
+        assert body["type"] == "answer"
+        assert body["citations"]
+        assert body["escalation"]["office"] == "Academic Advising"
+        assert body["escalation"]["contact"]["phone"] == "805-437-8571"
+        assert (
+            body["escalation"]["ticket_draft"]["summary"]
+            == "Student asked for an advisor."
+        )
+
+    def test_ticket_carries_raw_message_and_session(
+        self, mock_check, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = SAFE
+        mock_retrieve.return_value = CHUNKS
+        mock_invoke.return_value = [_answer_call(), _escalate_call()]
+
+        body = _body(
+            lambda_handler(_event(message="Help me register", session_id="s-9"), None)
+        )
+        ticket = body["escalation"]["ticket_draft"]
+        assert ticket["raw_message"] == "Help me register"
+        assert ticket["sessionId"] == "s-9"
+
+
+# ---------------------------------------------------------------------------
+# Clarify path
+# ---------------------------------------------------------------------------
+
+
+@patch("handler.invoke_model")
+@patch("handler.retrieve_context")
+@patch("handler.check_message")
+class TestClarifyPath:
+    def test_clarify_question_becomes_message(
+        self, mock_check, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = SAFE
+        mock_retrieve.return_value = CHUNKS
+        mock_invoke.return_value = [
             {
-                "text": "Registration opens March 1.",
-                "source_url": "https://csuci.edu/registration",
-                "source_title": "Registration Info",
-                "score": 0.9,
+                "name": "ask_clarification",
+                "input": {"question": "Do you mean the B.S. or the Completion Degree?"},
             }
         ]
-        # LLM (citations: must include the retrieved URL for validation)
-        mock_invoke.return_value = "You can register starting March 1. See https://csuci.edu/registration"
 
-        event = _apigw_event({"message": "How do I register?"})
-        from handler import lambda_handler
+        body = _body(lambda_handler(_event("CS degree requirements?"), None))
 
-        response = lambda_handler(event, {})
-        parsed = _parse_response(response)
+        assert body["type"] == "clarify"
+        assert body["message"] == "Do you mean the B.S. or the Completion Degree?"
+        assert "citations" not in body
+        assert "escalation" not in body
 
-        assert parsed["status"] == 200
-        assert parsed["body"]["answered"] is True
-        assert "register starting March 1" in parsed["body"]["answer"]
-        assert parsed["body"]["citations"] == [
-            {"title": "Registration Info", "url": "https://csuci.edu/registration"}
+
+# ---------------------------------------------------------------------------
+# Escalate path
+# ---------------------------------------------------------------------------
+
+
+@patch("handler.invoke_model")
+@patch("handler.retrieve_context")
+@patch("handler.check_message")
+class TestEscalatePath:
+    def test_escalate_builds_contact_card_and_ticket(
+        self, mock_check, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = SAFE
+        mock_retrieve.return_value = CHUNKS
+        mock_invoke.return_value = [
+            _escalate_call(office="financial_aid", reason="Aid appeal needs a counselor.")
         ]
-        assert parsed["body"]["escalation"] is None
+
+        body = _body(lambda_handler(_event("I lost my scholarship"), None))
+
+        assert body["type"] == "escalate"
+        assert body["message"]  # code-owned lead-in, non-empty
+        assert body["escalation"]["office"] == "Financial Aid"
+        assert body["escalation"]["contact"]["map_url"]
+        assert body["escalation"]["ticket_draft"]["summary"] == "Aid appeal needs a counselor."
+
+    def test_unknown_office_coerced_to_general_support(
+        self, mock_check, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = SAFE
+        mock_retrieve.return_value = CHUNKS
+        mock_invoke.return_value = [_escalate_call(office="housing_office")]
+
+        body = _body(lambda_handler(_event("Can I have a pet in the dorms?"), None))
+
+        assert body["type"] == "escalate"
+        assert body["escalation"]["office"] == "Student Support Services"
+
+    def test_missing_office_coerced_to_general_support(
+        self, mock_check, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = SAFE
+        mock_retrieve.return_value = CHUNKS
+        mock_invoke.return_value = [
+            {"name": "escalate_to_office", "input": {"reason": "needs a person"}}
+        ]
+
+        body = _body(lambda_handler(_event(), None))
+        assert body["escalation"]["office"] == "Student Support Services"
+
+    def test_empty_reason_gets_fallback_summary(
+        self, mock_check, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = SAFE
+        mock_retrieve.return_value = CHUNKS
+        mock_invoke.return_value = [_escalate_call(office="registrar", reason="")]
+
+        body = _body(lambda_handler(_event("transcript problem"), None))
+        assert "transcript problem" in body["escalation"]["ticket_draft"]["summary"]
 
 
 # ---------------------------------------------------------------------------
-# Tests — crisis messages
+# Decline path
 # ---------------------------------------------------------------------------
-class TestCrisisMessage:
-    """Crisis messages must return a crisis response and skip the LLM."""
 
-    @patch("handler.invoke_model")
-    @patch("handler.retrieve_context")
-    @patch("handler.check_message")
-    def test_crisis_bypasses_llm(
+
+@patch("handler.invoke_model")
+@patch("handler.retrieve_context")
+@patch("handler.check_message")
+class TestDeclinePath:
+    def test_decline_uses_canned_message_not_model_text(
+        self, mock_check, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = SAFE
+        mock_retrieve.return_value = []
+        mock_invoke.return_value = [
+            {
+                "name": "decline_out_of_scope",
+                "input": {"reason": "off-topic: bicycle repair"},
+            }
+        ]
+
+        body = _body(lambda_handler(_event("How do I fix a flat tire?"), None))
+
+        assert body["type"] == "decline"
+        assert "CSUCI topics" in body["message"]
+        assert "bicycle" not in body["message"]  # internal reason never shown
+        assert "escalation" not in body
+
+
+# ---------------------------------------------------------------------------
+# Crisis path (unchanged behavior, new contract)
+# ---------------------------------------------------------------------------
+
+
+@patch("handler.invoke_model")
+@patch("handler.retrieve_context")
+@patch("handler.check_message")
+class TestCrisisPath:
+    def test_crisis_bypasses_llm_and_retrieval(
         self, mock_check, mock_retrieve, mock_invoke
     ):
         mock_check.return_value = {
             "safe": False,
             "crisis": True,
-            "crisis_response": "Please call 988 for immediate help.",
+            "crisis_response": "Please call 988 now.",
             "escalation": {"needed": False, "category": None},
         }
 
-        event = _apigw_event({"message": "I want to hurt myself"})
-        from handler import lambda_handler
+        body = _body(lambda_handler(_event("I want to hurt myself"), None))
 
-        response = lambda_handler(event, {})
-        parsed = _parse_response(response)
-
-        assert parsed["status"] == 200
-        assert parsed["body"]["answered"] is True
-        assert "988" in parsed["body"]["answer"]
-        assert parsed["body"]["citations"] == []
-        assert parsed["body"]["escalation"] is None
-        # LLM & Retriever should NOT have been called
+        assert body["type"] == "crisis"
+        assert "988" in body["message"]
         mock_invoke.assert_not_called()
         mock_retrieve.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# Tests — validation
+# Fail-safe policy: unusable model output → human handoff
 # ---------------------------------------------------------------------------
-class TestValidation:
-    """Requests without a 'message' field should return 400."""
 
+
+@patch("handler.invoke_model")
+@patch("handler.retrieve_context")
+@patch("handler.check_message")
+class TestFailSafePolicy:
+    def _assert_fail_safe(self, body):
+        assert body["type"] == "escalate"
+        assert body["escalation"]["office"] == "Student Support Services"
+
+    def test_no_tool_calls(self, mock_check, mock_retrieve, mock_invoke):
+        mock_check.return_value = SAFE
+        mock_retrieve.return_value = CHUNKS
+        mock_invoke.return_value = []
+        self._assert_fail_safe(_body(lambda_handler(_event(), None)))
+
+    def test_unknown_tool(self, mock_check, mock_retrieve, mock_invoke):
+        mock_check.return_value = SAFE
+        mock_retrieve.return_value = CHUNKS
+        mock_invoke.return_value = [{"name": "make_coffee", "input": {}}]
+        self._assert_fail_safe(_body(lambda_handler(_event(), None)))
+
+    def test_disallowed_combo(self, mock_check, mock_retrieve, mock_invoke):
+        mock_check.return_value = SAFE
+        mock_retrieve.return_value = CHUNKS
+        mock_invoke.return_value = [
+            {"name": "ask_clarification", "input": {"question": "Which one?"}},
+            {"name": "decline_out_of_scope", "input": {"reason": "x"}},
+        ]
+        self._assert_fail_safe(_body(lambda_handler(_event(), None)))
+
+    def test_answer_with_empty_citations(self, mock_check, mock_retrieve, mock_invoke):
+        mock_check.return_value = SAFE
+        mock_retrieve.return_value = CHUNKS
+        mock_invoke.return_value = [_answer_call(citations=[])]
+        self._assert_fail_safe(_body(lambda_handler(_event(), None)))
+
+    def test_answer_with_out_of_range_citation(
+        self, mock_check, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = SAFE
+        mock_retrieve.return_value = CHUNKS  # 3 chunks
+        mock_invoke.return_value = [_answer_call(citations=[1, 7])]
+        self._assert_fail_safe(_body(lambda_handler(_event(), None)))
+
+    def test_answer_with_non_integer_citation(
+        self, mock_check, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = SAFE
+        mock_retrieve.return_value = CHUNKS
+        mock_invoke.return_value = [_answer_call(citations=["the registration guide"])]
+        self._assert_fail_safe(_body(lambda_handler(_event(), None)))
+
+    def test_answer_with_zero_retrieved_chunks(
+        self, mock_check, mock_retrieve, mock_invoke
+    ):
+        # Zero chunks retrieved: any citation is out of range, so an answer
+        # attempt can never be grounded — must fail safe.
+        mock_check.return_value = SAFE
+        mock_retrieve.return_value = []
+        mock_invoke.return_value = [_answer_call(citations=[1])]
+        self._assert_fail_safe(_body(lambda_handler(_event(), None)))
+
+
+# ---------------------------------------------------------------------------
+# Backstop: explicit human request always produces an escalation
+# ---------------------------------------------------------------------------
+
+
+@patch("handler.invoke_model")
+@patch("handler.retrieve_context")
+@patch("handler.check_message")
+class TestHumanRequestBackstop:
+    def test_answer_without_pair_gets_forced_escalation(
+        self, mock_check, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = WANTS_HUMAN
+        mock_retrieve.return_value = CHUNKS
+        mock_invoke.return_value = [_answer_call()]  # model forgot to pair
+
+        body = _body(
+            lambda_handler(_event("How do I register? I want to talk to someone."), None)
+        )
+
+        assert body["type"] == "answer"
+        assert body["escalation"]["office"] == "Student Support Services"
+
+    def test_model_pair_takes_precedence_over_backstop(
+        self, mock_check, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = WANTS_HUMAN
+        mock_retrieve.return_value = CHUNKS
+        mock_invoke.return_value = [_answer_call(), _escalate_call(office="advising")]
+
+        body = _body(lambda_handler(_event(), None))
+        # The model's office choice wins; backstop only fills the gap.
+        assert body["escalation"]["office"] == "Academic Advising"
+
+    def test_decline_with_human_request_still_escalates(
+        self, mock_check, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = WANTS_HUMAN
+        mock_retrieve.return_value = []
+        mock_invoke.return_value = [
+            {"name": "decline_out_of_scope", "input": {"reason": "gibberish"}}
+        ]
+
+        body = _body(lambda_handler(_event("asdfgh! give me a human"), None))
+        assert body["type"] == "decline"
+        assert body["escalation"]["office"] == "Student Support Services"
+
+
+# ---------------------------------------------------------------------------
+# Request validation & infra errors
+# ---------------------------------------------------------------------------
+
+
+class TestRequestValidation:
     def test_missing_message_returns_400(self):
-        event = _apigw_event({"not_message": "oops"})
-        from handler import lambda_handler
-
-        response = lambda_handler(event, {})
+        response = lambda_handler({"httpMethod": "POST", "body": json.dumps({})}, None)
         assert response["statusCode"] == 400
 
     def test_empty_body_returns_400(self):
-        event = _apigw_event({})
-        from handler import lambda_handler
+        response = lambda_handler({"httpMethod": "POST", "body": None}, None)
+        assert response["statusCode"] == 400
 
-        response = lambda_handler(event, {})
+    def test_invalid_json_returns_400(self):
+        response = lambda_handler({"httpMethod": "POST", "body": "{not json"}, None)
         assert response["statusCode"] == 400
 
     def test_options_preflight_returns_200(self):
-        event = {"httpMethod": "OPTIONS", "path": "/chat"}
-        from handler import lambda_handler
-
-        response = lambda_handler(event, {})
+        response = lambda_handler({"httpMethod": "OPTIONS"}, None)
         assert response["statusCode"] == 200
 
 
-# ---------------------------------------------------------------------------
-# Tests — Hallucination Guardrails
-# ---------------------------------------------------------------------------
-class TestHallucinationGuardrails:
-    """Verify that score floors, sentinel responses, and citations are validated."""
-
-    @patch("handler.invoke_model")
-    @patch("handler.retrieve_context")
-    @patch("handler.check_message")
-    def test_low_score_skips_llm_and_clarifies_on_first_turn(
+@patch("handler.invoke_model")
+@patch("handler.retrieve_context")
+@patch("handler.check_message")
+class TestInfraErrors:
+    def test_bedrock_failure_returns_500_not_escalation(
         self, mock_check, mock_retrieve, mock_invoke
     ):
-        mock_check.return_value = {
-            "safe": True,
-            "crisis": False,
-            "crisis_response": None,
-            "escalation": {"needed": False, "category": None},
-        }
-        mock_retrieve.return_value = [
-            {
-                "text": "Irrelevant info",
-                "source_url": "https://csuci.edu/irrelevant",
-                "source_title": "Irrelevant Page",
-                "score": 0.25,
-            }
-        ]
+        mock_check.return_value = SAFE
+        mock_retrieve.return_value = CHUNKS
+        mock_invoke.side_effect = RuntimeError("throttled")
 
-        # First turn (empty history) -> should prompt for clarification, not escalate yet
-        event = _apigw_event({"message": "What is the capital of France?", "history": []})
-        from handler import lambda_handler
-
-        response = lambda_handler(event, {})
-        parsed = _parse_response(response)
-
-        assert parsed["status"] == 200
-        assert parsed["body"]["answered"] is True
-        assert "rephrase or provide a bit more details" in parsed["body"]["answer"]
-        assert parsed["body"]["escalation"] is None
-        mock_invoke.assert_not_called()
-
-    @patch("handler.invoke_model")
-    @patch("handler.retrieve_context")
-    @patch("handler.check_message")
-    def test_low_score_escalates_on_second_turn(
-        self, mock_check, mock_retrieve, mock_invoke
-    ):
-        mock_check.return_value = {
-            "safe": True,
-            "crisis": False,
-            "crisis_response": None,
-            "escalation": {"needed": False, "category": None},
-        }
-        mock_retrieve.return_value = [
-            {
-                "text": "Irrelevant info",
-                "source_url": "https://csuci.edu/irrelevant",
-                "source_title": "Irrelevant Page",
-                "score": 0.25,
-            }
-        ]
-        from handler import CLARIFICATION_TEXT
-
-        # Second turn (history contains the clarification prompt) -> should escalate
-        event = _apigw_event({
-            "message": "What is the capital of France?",
-            "history": [
-                {"role": "user", "content": "What is the capital of France?"},
-                {"role": "assistant", "content": CLARIFICATION_TEXT}
-            ]
-        })
-        from handler import lambda_handler
-
-        response = lambda_handler(event, {})
-        parsed = _parse_response(response)
-
-        assert parsed["status"] == 200
-        assert parsed["body"]["answered"] is False
-        assert parsed["body"]["answer"] is None
-        assert parsed["body"]["escalation"]["trigger"] == "no_answer"
-        assert parsed["body"]["escalation"]["office"] == "Academic Advising"
-        mock_invoke.assert_not_called()
-
-    @patch("handler.invoke_model")
-    @patch("handler.retrieve_context")
-    @patch("handler.check_message")
-    def test_no_answer_sentinel_clarifies_on_first_turn(
-        self, mock_check, mock_retrieve, mock_invoke
-    ):
-        mock_check.return_value = {
-            "safe": True,
-            "crisis": False,
-            "crisis_response": None,
-            "escalation": {"needed": False, "category": None},
-        }
-        mock_retrieve.return_value = [
-            {
-                "text": "Some general registration rules.",
-                "source_url": "https://csuci.edu/reg",
-                "source_title": "Rules",
-                "score": 0.85,
-            }
-        ]
-        mock_invoke.return_value = "NO_ANSWER"
-
-        # First turn (empty history) -> should clarify
-        event = _apigw_event({"message": "How do I override physics prerequisites?", "history": []})
-        from handler import lambda_handler
-
-        response = lambda_handler(event, {})
-        parsed = _parse_response(response)
-
-        assert parsed["status"] == 200
-        assert parsed["body"]["answered"] is True
-        assert "rephrase or provide a bit more details" in parsed["body"]["answer"]
-        assert parsed["body"]["escalation"] is None
-
-    @patch("handler.invoke_model")
-    @patch("handler.retrieve_context")
-    @patch("handler.check_message")
-    def test_no_answer_sentinel_escalates_on_second_turn(
-        self, mock_check, mock_retrieve, mock_invoke
-    ):
-        mock_check.return_value = {
-            "safe": True,
-            "crisis": False,
-            "crisis_response": None,
-            "escalation": {"needed": False, "category": None},
-        }
-        mock_retrieve.return_value = [
-            {
-                "text": "Some general registration rules.",
-                "source_url": "https://csuci.edu/reg",
-                "source_title": "Rules",
-                "score": 0.85,
-            }
-        ]
-        mock_invoke.return_value = "NO_ANSWER"
-        from handler import CLARIFICATION_TEXT
-
-        # Second turn (history contains the clarification prompt) -> should escalate
-        event = _apigw_event({
-            "message": "How do I override physics prerequisites?",
-            "history": [
-                {"role": "user", "content": "How do I override physics prerequisites?"},
-                {"role": "assistant", "content": CLARIFICATION_TEXT}
-            ]
-        })
-        from handler import lambda_handler
-
-        response = lambda_handler(event, {})
-        parsed = _parse_response(response)
-
-        assert parsed["status"] == 200
-        assert parsed["body"]["answered"] is False
-        assert parsed["body"]["answer"] is None
-        assert parsed["body"]["escalation"]["trigger"] == "no_answer"
-        assert parsed["body"]["escalation"]["office"] == "Registrar's Office"
-
-    @patch("handler.invoke_model")
-    @patch("handler.retrieve_context")
-    @patch("handler.check_message")
-    def test_citation_validation_failure_clarifies_on_first_turn(
-        self, mock_check, mock_retrieve, mock_invoke
-    ):
-        mock_check.return_value = {
-            "safe": True,
-            "crisis": False,
-            "crisis_response": None,
-            "escalation": {"needed": False, "category": None},
-        }
-        mock_retrieve.return_value = [
-            {
-                "text": "Official details.",
-                "source_url": "https://csuci.edu/official",
-                "source_title": "Official",
-                "score": 0.90,
-            }
-        ]
-        mock_invoke.return_value = "You can request this at Sage Hall. (No link included)"
-
-        # First turn -> should clarify
-        event = _apigw_event({"message": "How do I request a card?", "history": []})
-        from handler import lambda_handler
-
-        response = lambda_handler(event, {})
-        parsed = _parse_response(response)
-
-        assert parsed["status"] == 200
-        assert parsed["body"]["answered"] is True
-        assert "rephrase or provide a bit more details" in parsed["body"]["answer"]
-        assert parsed["body"]["escalation"] is None
-
-    @patch("handler.invoke_model")
-    @patch("handler.retrieve_context")
-    @patch("handler.check_message")
-    def test_citation_validation_failure_escalates_on_second_turn(
-        self, mock_check, mock_retrieve, mock_invoke
-    ):
-        mock_check.return_value = {
-            "safe": True,
-            "crisis": False,
-            "crisis_response": None,
-            "escalation": {"needed": False, "category": None},
-        }
-        mock_retrieve.return_value = [
-            {
-                "text": "Official details.",
-                "source_url": "https://csuci.edu/official",
-                "source_title": "Official",
-                "score": 0.90,
-            }
-        ]
-        mock_invoke.return_value = "You can request this at Sage Hall. (No link included)"
-        from handler import CLARIFICATION_TEXT
-
-        # Second turn -> should escalate
-        event = _apigw_event({
-            "message": "How do I request a card?",
-            "history": [
-                {"role": "user", "content": "How do I request a card?"},
-                {"role": "assistant", "content": CLARIFICATION_TEXT}
-            ]
-        })
-        from handler import lambda_handler
-
-        response = lambda_handler(event, {})
-        parsed = _parse_response(response)
-
-        assert parsed["status"] == 200
-        assert parsed["body"]["answered"] is False
-        assert parsed["body"]["answer"] is None
-        assert parsed["body"]["escalation"]["trigger"] == "no_answer"
-
-
-# ---------------------------------------------------------------------------
-# Tests — escalation
-# ---------------------------------------------------------------------------
-class TestEscalation:
-    """Escalation intent (user requested) should route and return answered: True."""
-
-    @patch("handler.invoke_model")
-    @patch("handler.retrieve_context")
-    @patch("handler.check_message")
-    def test_user_requested_escalation_succeeds_with_escalation_payload(
-        self, mock_check, mock_retrieve, mock_invoke
-    ):
-        mock_check.return_value = {
-            "safe": True,
-            "crisis": False,
-            "crisis_response": None,
-            "escalation": {"needed": True, "category": "academic_advising"},
-        }
-        mock_retrieve.return_value = [
-            {
-                "text": "Schedule advisor appointments online.",
-                "source_url": "https://csuci.edu/advising",
-                "source_title": "Advising Page",
-                "score": 0.85,
-            }
-        ]
-        mock_invoke.return_value = "Go to https://csuci.edu/advising to schedule."
-
-        event = _apigw_event({"message": "I need to talk to an advisor"})
-        from handler import lambda_handler
-
-        response = lambda_handler(event, {})
-        parsed = _parse_response(response)
-
-        assert parsed["status"] == 200
-        # The bot answered the query successfully
-        assert parsed["body"]["answered"] is True
-        assert "schedule" in parsed["body"]["answer"]
-        # Escalation is also attached
-        assert parsed["body"]["escalation"] is not None
-        assert parsed["body"]["escalation"]["trigger"] == "user_requested"
-        assert parsed["body"]["escalation"]["office"] == "Academic Advising"
+        response = lambda_handler(_event(), None)
+        assert response["statusCode"] == 500
+        body = json.loads(response["body"])
+        assert "error" in body
+        assert "escalation" not in body

@@ -1,8 +1,11 @@
 """
-Routing engine for the CSUCI Student Success Navigator.
+Office directory for the CSUCI Student Success Navigator.
 
-Maps query content and retrieved context keywords to the correct target
-department office, providing contact info and drafting human agent tickets.
+Formerly a keyword-based routing engine; now a pure phone book. The LLM picks
+the office (via the escalate_to_office tool — see tools.py); this module only
+supplies verified contact details and assembles the staff-facing ticket.
+
+The office keys here must stay in sync with tools.OFFICE_KEYS.
 """
 
 import logging
@@ -11,7 +14,7 @@ from typing import Any, Dict
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-# Topic-to-Office directory mapping (verified contact points)
+# Office directory (verified contact points)
 OFFICES: Dict[str, Dict[str, Any]] = {
     "financial_aid": {
         "office": "Financial Aid",
@@ -19,7 +22,6 @@ OFFICES: Dict[str, Dict[str, Any]] = {
         "url": "https://www.csuci.edu/financialaid/",
         "location": "Sage Hall, Room 1020",
         "map_url": "https://maps.google.com/?q=Sage+Hall+CSU+Channel+Islands",
-        "reason": "This request is routed to the Financial Aid office because it concerns FAFSA, scholarships, grants, loans, work-study programs, or fee waivers."
     },
     "advising": {
         "office": "Academic Advising",
@@ -27,7 +29,6 @@ OFFICES: Dict[str, Dict[str, Any]] = {
         "url": "https://www.csuci.edu/advising/",
         "location": "Sage Hall, Room 1020",
         "map_url": "https://maps.google.com/?q=Sage+Hall+CSU+Channel+Islands",
-        "reason": "This request is routed to Academic Advising because it requires guidance on major/minor plans, GE requirements, degree planners, or transfer credits."
     },
     "registrar": {
         "office": "Registrar's Office",
@@ -35,7 +36,6 @@ OFFICES: Dict[str, Dict[str, Any]] = {
         "url": "https://www.csuci.edu/registrar/",
         "location": "Sage Hall, Room 1020 (Enrollment Center)",
         "map_url": "https://maps.google.com/?q=Sage+Hall+CSU+Channel+Islands",
-        "reason": "This request is routed to the Registrar's Office because it involves registration holds, transcript requests, graduation applications, add/drop limits, or enrollment records."
     },
     "tutoring": {
         "office": "Learning Resource Center",
@@ -43,116 +43,72 @@ OFFICES: Dict[str, Dict[str, Any]] = {
         "url": "https://www.csuci.edu/learningresourcecenter/",
         "location": "Broome Library, Room 2760",
         "map_url": "https://maps.google.com/?q=John+Spoor+Broome+Library+CSU+Channel+Islands",
-        "reason": "This request is routed to the Learning Resource Center (LRC) because it involves tutoring availability, peer mentoring, study skills, or academic workshops."
-    }
+    },
+    # Catch-all: a CSUCI matter that needs a human but fits no office above
+    # (housing, parking, IT, campus life, ...).
+    # TODO(team): verify this is the right triage contact — currently the main
+    # campus switchboard, not a dedicated Student Services desk.
+    "general_support": {
+        "office": "Student Support Services",
+        "phone": "805-437-8400",
+        "url": "https://www.csuci.edu/",
+        "location": "One University Drive, Camarillo",
+        "map_url": "https://maps.google.com/?q=CSU+Channel+Islands",
+    },
 }
 
-# Default routing destination
-DEFAULT_OFFICE_KEY = "advising"
+# Fail-safe destination for unusable model output and unknown office keys.
+DEFAULT_OFFICE_KEY = "general_support"
 
 
-import re
+def resolve_office_key(office_key: str | None) -> str:
+    """Coerce a model-supplied office key to a valid directory key."""
+    if office_key in OFFICES:
+        return office_key
+    if office_key:
+        logger.warning(
+            "Unknown office key %r — coercing to %s.", office_key, DEFAULT_OFFICE_KEY
+        )
+    return DEFAULT_OFFICE_KEY
 
-def _score_office(text: str, keywords: list[str]) -> int:
-    """Count the total occurrences of the keywords as distinct words in the text."""
-    count = 0
-    for kw in keywords:
-        pattern = r'\b' + re.escape(kw) + r'\b'
-        count += len(re.findall(pattern, text, re.IGNORECASE))
-    return count
 
-def route_query(message: str, context: str = "") -> Dict[str, Any]:
-    """Classify the target office based on query keywords and context.
-
-    Generates contact information and a ticket draft containing a summary
-    and the context surrounding why the request escalated to a human.
+def build_escalation(
+    office_key: str | None,
+    reason: str,
+    message: str,
+    session_id: str,
+) -> Dict[str, Any]:
+    """Build the escalation payload for the API response.
 
     Args:
-        message: The student's original query.
-        context: The text context retrieved from Bedrock KB (if any).
+        office_key: Office key chosen by the LLM (coerced if invalid).
+        reason:     The LLM's staff-facing note (or a code-supplied fallback).
+        message:    The student's original message, verbatim, for staff context.
+        session_id: Session identifier so staff can find the conversation logs.
 
     Returns:
-        Dict conforming to the 'escalation' block in the API contract.
+        The ``escalation`` block of the API contract.
     """
-    message_lower = message.lower()
-    context_lower = context.lower()
-    
-    # 1. Define expanded keyword categories (English and Spanish)
-    fa_keywords = [
-        "financial", "fafsa", "scholarship", "scholarships", "loan", "loans", 
-        "grant", "grants", "aid", "dream act", "work-study", "tuition", "fees", "sap", "waiver", "waivers",
-        "ayuda", "financiera", "beca", "becas", "préstamo", "préstamos", "gratis"
-    ]
-    reg_keywords = [
-        "register", "registration", "add class", "drop class", "withdrawal", 
-        "transcript", "transcripts", "diploma", "graduation", "prerequisite", 
-        "override", "records", "hold", "holds", "grade", "grades", "gpa", "probation", "catalog", "verification",
-        "registro", "registrar", "inscribirse", "inscribir", "clases", "calificaciones", "notas", "retirada"
-    ]
-    tutor_keywords = [
-        "tutoring", "tutor", "tutors", "math center", "writing center", 
-        "lrc", "study help", "homework", "workshop", "workshops", "study skills", "peer mentor",
-        "tutoría", "tutorias", "tareas", "estudiar"
-    ]
-    adv_keywords = [
-        "advisor", "advisors", "advising", "schedule advising", "major requirements", 
-        "ge requirements", "double major", "academic requirements", "minor", "minors", 
-        "transfer credits", "degree planner", "academic plan", "course plan",
-        "consejero", "consejeros", "consejería", "asesor", "asesores", "asesoría", "requisitos"
-    ]
+    key = resolve_office_key(office_key)
+    office_info = OFFICES[key]
+    logger.info("Escalation routed to office: %s", office_info["office"])
 
-    # 2. Score the user's direct message first (highest relevance)
-    message_scores = {
-        "financial_aid": _score_office(message_lower, fa_keywords),
-        "registrar": _score_office(message_lower, reg_keywords),
-        "tutoring": _score_office(message_lower, tutor_keywords),
-        "advising": _score_office(message_lower, adv_keywords)
-    }
-    
-    best_message_office = max(message_scores, key=message_scores.get)
-    
-    if message_scores[best_message_office] > 0:
-        office_key = best_message_office
-    else:
-        # 3. Fallback: Score the retrieved context
-        context_scores = {
-            "financial_aid": _score_office(context_lower, fa_keywords),
-            "registrar": _score_office(context_lower, reg_keywords),
-            "tutoring": _score_office(context_lower, tutor_keywords),
-            "advising": _score_office(context_lower, adv_keywords)
-        }
-        best_context_office = max(context_scores, key=context_scores.get)
-        if context_scores[best_context_office] > 0:
-            office_key = best_context_office
-        else:
-            office_key = DEFAULT_OFFICE_KEY
-
-    office_info = OFFICES[office_key]
-    logger.info("Routed query to office: %s", office_info["office"])
-
-    # Draft a clean ticket description for the human advisor
-    summary = f"Student is asking: '{message}'"
-    if len(summary) > 120:
-        summary = summary[:117] + "..."
-
-    ticket_draft = {
-        "summary": summary,
-        "context": (
-            f"Escalated office: {office_info['office']}. "
-            f"Reason: {office_info['reason']} "
-            f"Query context: '{message}'."
-        )
-    }
+    summary = reason.strip() if reason and reason.strip() else (
+        f"Student needs human assistance with: '{message[:120]}'"
+    )
 
     return {
-        "trigger": "no_answer",  # default, handler overrides if user_requested
         "office": office_info["office"],
-        "reason": office_info["reason"],
         "contact": {
             "phone": office_info["phone"],
             "url": office_info["url"],
             "location": office_info["location"],
-            "map_url": office_info["map_url"]
+            "map_url": office_info["map_url"],
         },
-        "ticket_draft": ticket_draft
+        "ticket_draft": {
+            "summary": summary,
+            "raw_message": message,
+            "office": office_info["office"],
+            "sessionId": session_id,
+        },
     }

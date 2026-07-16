@@ -11,8 +11,7 @@ function App() {
       role: 'bot',
       content: 'Hello! I am the CSUCI Student Success Navigator. How can I help you find registration, advising, degree requirements, or financial aid information today?',
       citations: [],
-      escalation: null,
-      answered: true
+      escalation: null
     }
   ]);
   const [history, setHistory] = useState([]);
@@ -131,30 +130,44 @@ function App() {
     setInput('');
   };
 
-  const parseMarkdownLinks = (text) => {
+  // Resolve inline [N] passage markers into source links using the citations
+  // sidecar (each entry: { title, url, passages: [N, ...] }). The model never
+  // writes URLs — the backend resolves passage numbers to trusted sources.
+  const parseCitationMarkers = (text, citations) => {
     if (!text) return '';
-    
+
     // Programmatically strip bolding (**) and heading (#) markdown syntax
     let cleanText = text.replace(/\*\*/g, '');
     cleanText = cleanText.replace(/#+\s+/g, '');
-    
-    const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+
+    const markerRegex = /\[(\d+)\]/g;
     const parts = [];
     let lastIndex = 0;
     let match;
 
-    while ((match = linkRegex.exec(cleanText)) !== null) {
+    while ((match = markerRegex.exec(cleanText)) !== null) {
       if (match.index > lastIndex) {
         parts.push(cleanText.substring(lastIndex, match.index));
       }
-      const title = match[1];
-      const url = match[2];
-      parts.push(
-        <a key={match.index} href={url} target="_blank" rel="noopener noreferrer" style={{ color: '#C51B29', textDecoration: 'underline' }}>
-          {title}
-        </a>
-      );
-      lastIndex = linkRegex.lastIndex;
+      const passageNum = parseInt(match[1], 10);
+      const cite = (citations || []).find((c) => (c.passages || []).includes(passageNum));
+      if (cite && cite.url) {
+        parts.push(
+          <a
+            key={match.index}
+            href={cite.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={cite.title}
+            style={{ color: '#C51B29', fontWeight: '700', textDecoration: 'none', fontSize: '0.85em', verticalAlign: 'super' }}
+          >
+            [{match[1]}]
+          </a>
+        );
+      } else {
+        parts.push(match[0]);
+      }
+      lastIndex = markerRegex.lastIndex;
     }
 
     if (lastIndex < cleanText.length) {
@@ -198,8 +211,7 @@ function App() {
       role: 'user',
       content: userQuery,
       citations: [],
-      escalation: null,
-      answered: true
+      escalation: null
     };
     setMessages((prev) => [...prev, newUserMsg]);
 
@@ -227,19 +239,21 @@ function App() {
       const newBotMsg = {
         id: (Date.now() + 1).toString(),
         role: 'bot',
-        content: data.answer || '',
+        type: data.type,
+        content: data.message || '',
         citations: data.citations || [],
-        escalation: data.escalation,
-        answered: data.answered
+        escalation: data.escalation || null
       };
 
       setMessages((prev) => [...prev, newBotMsg]);
 
-      if (data.answered && data.answer) {
+      // Only real answers and clarifying questions carry dialogue value for
+      // the LLM's next turn; canned escalate/decline messages do not.
+      if ((data.type === 'answer' || data.type === 'clarify') && data.message) {
         setHistory((prev) => [
           ...prev,
           { role: 'user', content: userQuery },
-          { role: 'assistant', content: data.answer }
+          { role: 'assistant', content: data.message }
         ]);
       }
 
@@ -252,8 +266,7 @@ function App() {
           role: 'bot',
           content: "Sorry, I am unable to connect to the navigator backend. Please ensure the local server is running on http://localhost:8000/chat.",
           citations: [],
-          escalation: null,
-          answered: true
+          escalation: null
         }
       ]);
     } finally {
@@ -346,12 +359,17 @@ function App() {
               {messages.map((msg) => (
                 <div key={msg.id} className={`chat-bubble-row ${msg.role}`}>
                   <div className="chat-text-bubble">
-                    {!msg.answered && msg.role === 'bot' ? (
-                      <span style={{ color: 'var(--csuci-muted)', fontStyle: 'italic' }}>
-                        User response can't be processed. Routing request...
-                      </span>
-                    ) : (
-                      <div>{parseMarkdownLinks(msg.content)}</div>
+                    <div>{parseCitationMarkers(msg.content, msg.citations)}</div>
+
+                    {/* Source list (deduped, resolved server-side from passage numbers) */}
+                    {msg.citations && msg.citations.length > 0 && (
+                      <div className="citations-wrapper" style={{ marginTop: '10px', display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                        {msg.citations.map((cite, index) => (
+                          <a key={index} href={cite.url} target="_blank" rel="noopener noreferrer" className="citation-btn" style={{ fontSize: '12px', color: '#C51B29', textDecoration: 'none', border: '1px solid #e2c4c8', borderRadius: '12px', padding: '2px 10px' }}>
+                            🔗 {cite.title}
+                          </a>
+                        ))}
+                      </div>
                     )}
 
                     {/* Escalation Card */}

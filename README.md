@@ -2,7 +2,7 @@
 
 An AI-powered chatbot that helps California State University Channel Islands (CSUCI) students get instant, accurate answers to questions about registration, advising, financial aid, graduation, and campus support services.
 
-Built on **Amazon Bedrock** (Claude 3.5 Sonnet + Knowledge Bases) with a fully serverless AWS backend and a React frontend.
+Built on **Amazon Bedrock** (Claude Sonnet 5 + Knowledge Bases) with a fully serverless AWS backend and a React frontend. On every turn the model makes a **structured decision** via Converse tool-use — answer, ask a clarifying question, escalate to a specific campus office, or decline — instead of emitting text that code has to parse.
 
 ---
 
@@ -10,16 +10,16 @@ Built on **Amazon Bedrock** (Claude 3.5 Sonnet + Knowledge Bases) with a fully s
 
 ```mermaid
 flowchart LR
-    Student([Student]) -->|message| APIGW[API Gateway]
+    Student([Student]) -->|message + history| APIGW[API Gateway]
     APIGW --> Lambda[Lambda Orchestrator]
     Lambda --> Safety[Safety Filter]
-    Safety -->|crisis| SNS[SNS Escalation]
+    Safety -->|crisis| Lambda
     Safety -->|safe| KB[Bedrock Knowledge Base]
-    KB --> Claude[Claude 3.5 Sonnet]
-    Claude --> Lambda
-    Lambda --> DDB[(DynamoDB Sessions)]
-    Lambda -->|response| APIGW
-    APIGW -->|answer| Student
+    KB -->|numbered passages| Lambda
+    Lambda -->|toolConfig| Claude[Claude Sonnet 5<br/>tool-use decision]
+    Claude -->|answer / clarify / escalate / decline| Lambda
+    Lambda -->|typed response| APIGW
+    APIGW --> Student
 ```
 
 ### Component Summary
@@ -27,12 +27,13 @@ flowchart LR
 | Component | Purpose |
 |---|---|
 | **API Gateway** | HTTPS endpoint with CORS; routes `POST /chat` to Lambda |
-| **Lambda Orchestrator** | Coordinates safety check → retrieval → LLM → session save |
-| **Safety Filter** | Detects crisis language and escalation requests |
-| **Bedrock Knowledge Base** | RAG retrieval over CSUCI catalog & policy PDFs |
-| **Claude 3.5 Sonnet** | Generates grounded, student-friendly answers |
-| **DynamoDB** | Stores multi-turn conversation sessions (TTL-enabled) |
-| **SNS** | Sends email/SMS alerts when a student needs human help |
+| **Lambda Orchestrator** | Safety check → retrieval → tool-use decision → typed response |
+| **Safety Filter** | Deterministic crisis detection (pre-LLM) + human-request backstop |
+| **Bedrock Knowledge Base** | RAG retrieval over CSUCI catalog & policy documents |
+| **Claude Sonnet 5** | Picks one of four tools (or answer+escalate pair); cites passages by number |
+| **Office directory** (`router.py`) | Phone book: contact cards + staff tickets for the office the model picks |
+
+Conversation history is client-managed (passed in each request); nothing is stored server-side. See **[docs/architecture.md](docs/architecture.md)** for the full design and **[docs/converse-tools-refactor-plan.md](docs/converse-tools-refactor-plan.md)** for the decision record behind it.
 
 ---
 
@@ -107,6 +108,7 @@ pytest tests/ -v
 ```json
 {
   "message": "How do I register for classes?",
+  "history": [],
   "sessionId": "optional-uuid"
 }
 ```
@@ -114,11 +116,14 @@ pytest tests/ -v
 **Response (200):**
 ```json
 {
-  "answer": "You can register via the myCI portal...",
-  "sources": ["catalog.pdf"],
+  "type": "answer",
+  "message": "You can register via the myCI portal [1]...",
+  "citations": [{ "title": "Registration Guide", "url": "https://...", "passages": [1] }],
   "sessionId": "uuid-of-session"
 }
 ```
+
+`type` is one of `answer | clarify | escalate | decline | crisis`; `escalation` (contact card + ticket draft) appears when a human handoff is involved.
 
 For the full schema, error codes, and curl examples see **[docs/api_reference.md](docs/api_reference.md)**.
 
@@ -135,23 +140,29 @@ CSUCI Student Success Navigation/
 │   └── samconfig.toml         ← SAM CLI deployment defaults
 ├── lambda/
 │   ├── orchestrator/
-│   │   └── handler.py         ← Lambda entry point
-│   ├── safety_filter.py       ← crisis & escalation detection
-│   ├── session.py             ← DynamoDB session management
-│   ├── retriever.py           ← Bedrock Knowledge Base retrieval
-│   └── llm.py                 ← Claude response generation
+│   │   ├── handler.py         ← Lambda entry point: dispatch + policy
+│   │   ├── tools.py           ← the four Converse tools (routing rules live here)
+│   │   ├── prompts.py         ← thin system prompt + code-owned templates
+│   │   ├── llm.py             ← Converse tool-use wrapper (the only Bedrock seam)
+│   │   ├── retriever.py       ← Bedrock Knowledge Base retrieval
+│   │   └── router.py          ← office phone book + ticket assembly
+│   └── safety_filter.py       ← crisis & human-request detection
+├── eval/
+│   ├── golden_set.json        ← human answer key (outcome + office labels)
+│   └── run_eval.py            ← live scorecard: accuracy + confusion matrix
 ├── tests/
 │   ├── conftest.py            ← shared fixtures
 │   ├── test_safety_filter.py
-│   ├── test_session.py
 │   ├── test_retriever.py
-│   ├── test_handler.py
+│   ├── test_llm.py            ← Converse parsing + decision validation
+│   ├── test_handler.py        ← dispatch, contract, fail-safe policy
 │   └── fixtures/
 │       └── sample_queries.json
 ├── frontend/                  ← React app (separate README)
 └── docs/
     ├── api_reference.md
-    └── architecture.md
+    ├── architecture.md
+    └── converse-tools-refactor-plan.md
 ```
 
 ---

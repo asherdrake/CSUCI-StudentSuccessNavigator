@@ -27,10 +27,13 @@ Parameters:
 
   ModelId:
     Type: String
-    Default: anthropic.claude-3-5-sonnet-20241022-v2:0
+    Default: us.anthropic.claude-sonnet-5
     Description: >
-      The Bedrock foundation model identifier used for response
-      generation (Claude 3.5 Sonnet v2 by default).
+      The Bedrock model identifier used for response generation.
+      Claude models on Bedrock are inference-profile only, so this
+      must be the "us."-prefixed cross-region inference profile ID
+      (Claude Sonnet 5 by default). The model must support Converse
+      tool-use.
 
 # ---------------------------------------------------------------------------
 # Global settings
@@ -94,12 +97,17 @@ Resources:
           ENVIRONMENT: !Ref Environment
       Policies:
         # --- Bedrock InvokeModel ---
+        # Inference profiles resolve to foundation models in multiple regions,
+        # so the policy must allow both the profile ARN and the underlying
+        # cross-region foundation-model ARNs.
         - Statement:
             - Effect: Allow
               Action:
                 - bedrock:InvokeModel
                 - bedrock:InvokeModelWithResponseStream
-              Resource: !Sub arn:aws:bedrock:${AWS::Region}::foundation-model/${ModelId}
+              Resource:
+                - !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${ModelId}
+                - arn:aws:bedrock:*::foundation-model/anthropic.*
         # --- Bedrock Retrieve (Knowledge Base) ---
         - Statement:
             - Effect: Allow
