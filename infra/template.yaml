@@ -27,10 +27,27 @@ Parameters:
 
   ModelId:
     Type: String
-    Default: anthropic.claude-3-5-sonnet-20241022-v2:0
+    Default: us.anthropic.claude-sonnet-5
     Description: >
-      The Bedrock foundation model identifier used for response
-      generation (Claude 3.5 Sonnet v2 by default).
+      The Bedrock model identifier used for response generation.
+      Claude models on Bedrock are inference-profile only, so this
+      must be the "us."-prefixed cross-region inference profile ID
+      (Claude Sonnet 5 by default). The model must support Converse
+      tool-use.
+
+  GuardrailId:
+    Type: String
+    Description: >
+      The ID of the Amazon Bedrock Guardrail applied to Converse calls
+      (content filters, denied topics, PII masking, contextual grounding).
+    MinLength: 1
+
+  GuardrailVersion:
+    Type: String
+    Default: DRAFT
+    Description: >
+      The Bedrock Guardrail version to use. Defaults to DRAFT; use a
+      numbered version (e.g. "1") for production/demo deployments.
 
 # ---------------------------------------------------------------------------
 # Global settings
@@ -47,7 +64,7 @@ Globals:
       Environment: !Ref Environment
 
   Api:
-    # Implicit ServerlessRestApi CORS configuration
+    # Default CORS applied to Globals; ChatRestApi below overrides explicitly.
     Cors:
       AllowOrigin: "'*'"
       AllowHeaders: "'Content-Type,Authorization'"
@@ -90,32 +107,57 @@ Resources:
         Variables:
           BEDROCK_KB_ID: !Ref BedrockKBId
           MODEL_ID: !Ref ModelId
+          GUARDRAIL_ID: !Ref GuardrailId
+          GUARDRAIL_VERSION: !Ref GuardrailVersion
           SNS_TOPIC_ARN: !Ref EscalationTopic
           ENVIRONMENT: !Ref Environment
       Policies:
         # --- Bedrock InvokeModel ---
+        # Inference profiles resolve to foundation models in multiple regions,
+        # so the policy must allow both the profile ARN and the underlying
+        # cross-region foundation-model ARNs.
         - Statement:
             - Effect: Allow
               Action:
                 - bedrock:InvokeModel
                 - bedrock:InvokeModelWithResponseStream
-              Resource: !Sub arn:aws:bedrock:${AWS::Region}::foundation-model/${ModelId}
+              Resource:
+                - !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${ModelId}
+                - arn:aws:bedrock:*::foundation-model/anthropic.*
         # --- Bedrock Retrieve (Knowledge Base) ---
         - Statement:
             - Effect: Allow
               Action:
                 - bedrock:Retrieve
               Resource: !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:knowledge-base/${BedrockKBId}
+        # --- Bedrock Guardrail ---
+        # This guardrail has cross-region inference enabled (Bedrock console:
+        # "US Guardrail v1:0" profile, AWS Regions us-east-1/us-east-2/
+        # us-west-2). Bedrock routes each ApplyGuardrail call to whichever of
+        # those three regions has capacity, so the profile ARN's region
+        # segment varies non-deterministically between calls (confirmed via
+        # CloudWatch: same request type denied against us-east-1 then
+        # us-east-2 then us-east-1 again across consecutive invocations) —
+        # all three must be granted explicitly.
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:ApplyGuardrail
+              Resource:
+                - !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:guardrail/${GuardrailId}
+                - !Sub arn:aws:bedrock:us-east-1:${AWS::AccountId}:guardrail-profile/us.guardrail.v1:0
+                - !Sub arn:aws:bedrock:us-east-2:${AWS::AccountId}:guardrail-profile/us.guardrail.v1:0
+                - !Sub arn:aws:bedrock:us-west-2:${AWS::AccountId}:guardrail-profile/us.guardrail.v1:0
         # --- SNS Publish ---
         - SNSPublishMessagePolicy:
-            TopicArn: !Ref EscalationTopic
+            TopicName: !GetAtt EscalationTopic.TopicName
       Events:
         ChatApi:
           Type: Api
           Properties:
             Path: /chat
             Method: POST
-            RestApiId: !Ref ServerlessRestApi
+            RestApiId: !Ref ChatRestApi
       Tags:
         Project: StudentSuccessNavigator
         Environment: !Ref Environment
@@ -123,7 +165,7 @@ Resources:
   # -------------------------------------------------------------------------
   # API Gateway — Explicit definition for CORS + stage control
   # -------------------------------------------------------------------------
-  ServerlessRestApi:
+  ChatRestApi:
     Type: AWS::Serverless::Api
     Properties:
       Name: !Sub student-navigator-api-${Environment}
@@ -142,7 +184,7 @@ Resources:
 Outputs:
   ApiEndpointUrl:
     Description: URL of the /chat API endpoint.
-    Value: !Sub https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/prod/chat
+    Value: !Sub https://${ChatRestApi}.execute-api.${AWS::Region}.amazonaws.com/prod/chat
 
   OrchestratorFunctionArn:
     Description: ARN of the Orchestrator Lambda function.

@@ -92,6 +92,80 @@ _ESCALATION_CATEGORY_MAP: dict[str, str] = {
 }
 
 # ---------------------------------------------------------------------------
+# Small-talk detection (greetings / closings)
+# ---------------------------------------------------------------------------
+# Matched only against the ENTIRE message (after stripping trailing
+# punctuation), not as a substring search — this is deliberately narrow so it
+# only catches messages that are purely a greeting/closing, not a real
+# question that happens to start with "hi" (e.g. "hi, how do I register?").
+_GREETING_PATTERNS: list[re.Pattern] = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in [
+        r"^(hi|hello|hey|hiya|yo)$",
+        r"^(hi|hello|hey)\s+there$",
+        r"^good\s+(morning|afternoon|evening)$",
+        r"^what'?s\s+up$",
+    ]
+]
+
+_CLOSING_PATTERNS: list[re.Pattern] = [
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in [
+        r"^(bye|goodbye|see\s+you|see\s+ya)$",
+        r"^thanks?(\s+you)?$",
+        r"^thank\s+you$",
+        r"^(thanks|thank\s+you)[,!\s]*(for\s+(the|your)\s+help)?$",
+        r"^i('?m|\s+am)\s+(done|good|all\s+set)[,!\s]*(thanks?( you)?( for( the| your)? help)?)?$",
+        r"^that'?s\s+all[,!\s]*(thanks?( you)?)?$",
+        r"^that\s+(helps?|answers?\s+my\s+question)[,!\s]*(thanks?( you)?)?$",
+        # "thanks" and "I'm done" combined in either order, plus optional
+        # trailing filler like "cool" / "great" / "awesome".
+        r"^thanks?[,!\s]+i('?m|\s+am)\s+(done|good|all\s+set)[,!\s]*(cool|great|awesome)?$",
+        r"^i('?m|\s+am)\s+(done|good|all\s+set)[,!\s]+thanks?[,!\s]*(cool|great|awesome)?$",
+        # Casual acknowledgments — deliberately excludes short filler like
+        # "ok"/"cool"/"okay"/"alright" that students commonly use as a
+        # mid-conversation continuer ("ok, and what about...") rather than
+        # an ending; only phrases unambiguous enough to signal "I'm done"
+        # are included here.
+        r"^(gotcha|got\s+it|sounds\s+good|makes\s+sense)$",
+    ]
+]
+
+_GREETING_RESPONSE: str = (
+    "Hi there! 👋 I'm the CSUCI Student Success Navigator. "
+    "Ask me anything about registration, advising, financial aid, graduation, or campus support."
+)
+
+_CLOSING_RESPONSE: str = (
+    "You're welcome! Feel free to come back anytime you have more questions. Good luck! 🎓"
+)
+
+
+def _detect_smalltalk(message: str) -> Optional[str]:
+    """Return a canned response if the message is purely a greeting or
+    closing, else None.
+
+    Args:
+        message: The raw user message.
+
+    Returns:
+        The canned response string, or None if this isn't small talk.
+    """
+    normalized = message.strip().rstrip(".!?").strip()
+    if not normalized:
+        return None
+
+    for pattern in _GREETING_PATTERNS:
+        if pattern.match(normalized):
+            return _GREETING_RESPONSE
+
+    for pattern in _CLOSING_PATTERNS:
+        if pattern.match(normalized):
+            return _CLOSING_RESPONSE
+
+    return None
+
+# ---------------------------------------------------------------------------
 # Hardcoded crisis response
 # ---------------------------------------------------------------------------
 _CRISIS_RESPONSE: str = (
@@ -181,7 +255,8 @@ def check_message(message: str) -> dict:
                 "escalation": {
                     "needed": bool,
                     "category": str | None   # e.g. "academic_advising"
-                }
+                },
+                "smalltalk_response": str | None,  # set for pure greetings/closings
             }
     """
     if not message or not message.strip():
@@ -191,6 +266,7 @@ def check_message(message: str) -> dict:
             "crisis": False,
             "crisis_response": None,
             "escalation": {"needed": False, "category": None},
+            "smalltalk_response": None,
         }
 
     # --- Crisis check (highest priority) ---
@@ -202,14 +278,19 @@ def check_message(message: str) -> dict:
             "crisis": True,
             "crisis_response": _CRISIS_RESPONSE,
             "escalation": {"needed": False, "category": None},
+            "smalltalk_response": None,
         }
 
     # --- Escalation check ---
     escalation = _detect_escalation(message)
+
+    # --- Small-talk check (only relevant when not escalating to a human) ---
+    smalltalk_response = None if escalation["needed"] else _detect_smalltalk(message)
 
     return {
         "safe": True,
         "crisis": False,
         "crisis_response": None,
         "escalation": escalation,
+        "smalltalk_response": smalltalk_response,
     }

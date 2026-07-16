@@ -2,7 +2,13 @@
 
 ## Overview
 
-The Student Success Navigator is a **Retrieval-Augmented Generation (RAG)** chatbot that answers student questions using official CSUCI documents as the ground truth. The system is fully serverless, running on AWS with no long-lived compute.
+The Student Success Navigator is a **Retrieval-Augmented Generation (RAG)**
+chatbot that answers student questions using official CSUCI documents as the
+ground truth. The system is fully serverless on AWS.
+
+The core design: the LLM makes a **structured decision** on every turn by
+calling exactly one Converse tool (or one allowed pair). There are no sentinel
+strings to parse and no keyword routing — the model classifies, code renders.
 
 ---
 
@@ -11,233 +17,171 @@ The Student Success Navigator is a **Retrieval-Augmented Generation (RAG)** chat
 ```mermaid
 flowchart TD
     subgraph Frontend
-        React[React SPA]
+        React[React SPA<br/>client-managed history]
     end
 
     subgraph AWS Cloud
         APIGW[API Gateway<br/>REST — prod stage]
         Lambda[Lambda Orchestrator<br/>Python 3.12]
-        Safety[Safety Filter<br/>module]
+        Safety[Safety Filter<br/>deterministic, pre-LLM]
         Retriever[Retriever<br/>module]
-        LLM[LLM module<br/>Claude 3.5 Sonnet]
         KB[(Bedrock<br/>Knowledge Base)]
-        DDB[(DynamoDB<br/>Sessions)]
-        SNS[SNS<br/>Escalation Topic]
-    end
-
-    subgraph External
-        Advisor([Human Advisor])
+        LLM[llm.py — Converse tool-use<br/>Claude Sonnet 5]
     end
 
     React -->|POST /chat| APIGW
     APIGW --> Lambda
     Lambda --> Safety
-    Safety -->|crisis detected| SNS
-    SNS -->|email/SMS| Advisor
+    Safety -->|crisis| Lambda
     Safety -->|safe| Retriever
     Retriever -->|query| KB
-    KB -->|context chunks| Retriever
-    Retriever --> LLM
-    LLM -->|prompt + context| Claude[Bedrock InvokeModel]
-    Claude -->|response| LLM
-    Lambda --> DDB
-    Lambda -->|JSON response| APIGW
-    APIGW -->|answer| React
+    KB -->|numbered passages| Lambda
+    Lambda -->|system prompt + toolConfig| LLM
+    LLM -->|"one tool call: answer / clarify / escalate / decline"| Lambda
+    Lambda -->|type-discriminated JSON| APIGW
+    APIGW --> React
 ```
 
 ---
+
+## The decision layer (tool-use)
+
+Instead of prose rules that the model may blend or violate, the model must
+call one of four tools (`toolChoice: any` — free text alone is rejected):
+
+| Tool | Meaning | Student sees |
+|---|---|---|
+| `answer_from_context(answer, citations[])` | Grounded answer; citations are **passage numbers** | The answer, with `[N]` links |
+| `ask_clarification(question)` | Question is ambiguous | One clarifying question |
+| `escalate_to_office(office, reason)` | CSUCI matter needing a human | Code-owned lead-in + contact card |
+| `decline_out_of_scope(reason)` | Not a CSUCI matter | Code-owned standard decline |
+
+**One allowed pair:** `answer_from_context` + `escalate_to_office`, for
+messages that are both answerable and need a human ("How do I register?
+Also connect me to an advisor."). Any other combination is rejected.
+
+**Grounding backstop:** the model cites passages by number; code resolves
+numbers to trusted `{title, url}` from the retrieved chunks. The model never
+emits a URL. Empty or out-of-range citations mean the answer is ungrounded —
+it is discarded and the turn fails safe to a human handoff.
+
+**Fail-safe policy:** any structurally unusable model output (no tool, unknown
+tool, disallowed combination, ungrounded answer) escalates to
+`general_support` and is logged loudly. Bedrock/API errors return HTTP 500
+(retryable) instead — infrastructure failure is not a reason to send a student
+to an office.
+
+**Backstop for explicit human requests:** the deterministic safety filter
+detects "I want to talk to a person"; if the model didn't escalate on its own,
+code forces an escalation card onto the response.
 
 ## Component Breakdown
 
 ### 1. API Gateway (REST)
 
-- **Type:** AWS::Serverless::Api (SAM-managed)
-- **Stage:** `prod`
-- **CORS:** Allows `*` origin, `Content-Type` / `Authorization` headers, `POST` / `OPTIONS` methods
-- **Integration:** Lambda proxy integration — the full HTTP request is forwarded to Lambda
+- **Type:** AWS::Serverless::Api (SAM-managed), stage `prod`
+- **CORS:** `*` origin, `POST`/`OPTIONS`
+- **Integration:** Lambda proxy
 
-**Why REST (not HTTP API)?** SAM's `Api` event type generates a REST API by default, and REST APIs offer richer features (request validation, usage plans, WAF integration) that will be useful in production.
+### 2. Lambda Orchestrator (`lambda/orchestrator/`)
 
-### 2. Lambda Orchestrator
-
-- **Runtime:** Python 3.12
-- **Memory:** 512 MB
-- **Timeout:** 30 seconds
+- **Runtime:** Python 3.12, 512 MB, 30 s timeout
 - **Handler:** `handler.lambda_handler`
 
-The orchestrator is the central coordinator. On each request it:
+Per request:
 
-1. Parses and validates the incoming JSON body.
-2. Calls the **Safety Filter** to check for crisis or escalation.
-3. If safe, calls the **Retriever** to fetch relevant document chunks.
-4. Passes the context + conversation history to the **LLM** for response generation.
-5. Saves the turn to **DynamoDB**.
-6. Returns the response.
+1. Parse and validate the JSON body.
+2. **Safety filter** (deterministic regex, pre-LLM): crisis → immediate canned
+   response, LLM and retriever bypassed entirely.
+3. **Retrieve** top-5 passages from the Bedrock KB — always; there is no
+   score-floor short-circuit. Weak retrieval is handled by the grounding
+   backstop, not by skipping the model.
+4. Build the thin system prompt (numbered passages) + tool config; one
+   Converse call.
+5. Validate the tool decision (structure in `llm.py`, policy in `handler.py`)
+   and dispatch into the response contract.
+6. Structured JSON interaction log to CloudWatch.
 
-**IAM Permissions:**
-
-| Permission | Resource |
-|---|---|
-| `dynamodb:PutItem`, `GetItem`, `UpdateItem`, `DeleteItem`, `Query`, `Scan` | Session table |
-| `bedrock:InvokeModel` | Claude 3.5 Sonnet foundation model |
-| `bedrock:Retrieve` | Bedrock Knowledge Base |
-| `sns:Publish` | Escalation SNS topic |
+Modules: `tools.py` (tool schemas — the routing rules live in the tool
+descriptions), `prompts.py` (thin system prompt + code-owned student-facing
+templates), `llm.py` (the only module that knows Converse exists),
+`router.py` (office phone book + ticket assembly), `safety_filter.py`
+(crisis/human-request regexes).
 
 ### 3. Safety Filter
 
-A **rule-based** module (no ML required) that scans every incoming message for:
-
-- **Crisis keywords:** suicide, self-harm, "want to die", "hurt myself", etc.
-- **Escalation phrases:** "talk to a person", "need a human", "speak with advisor"
-
-If a crisis is detected:
-- A pre-defined crisis response with hotline numbers is returned immediately.
-- The LLM and retriever are **bypassed** entirely (no risk of an inappropriate AI response).
-- An SNS notification is published to alert staff.
-
-If escalation is detected:
-- A response with advisor contact information is returned.
-- An SNS notification is published.
+Rule-based, pre-LLM. Crisis language returns a canned hotline response and
+bypasses all AI processing. Human-request phrases ("talk to a person") set a
+flag the handler uses as an escalation backstop.
 
 ### 4. Bedrock Knowledge Base (Retriever)
 
-- **Service:** Amazon Bedrock Knowledge Bases
-- **Data sources:** CSUCI catalog PDFs, policy documents, advising guides
+- **Service:** Amazon Bedrock Knowledge Bases (`bedrock-agent-runtime:Retrieve`)
 - **Embedding model:** Amazon Titan Text Embeddings v2
-- **Vector store:** Amazon OpenSearch Serverless (managed by Bedrock)
+- **Vector store:** OpenSearch Serverless (managed by Bedrock)
+- Returns top-K chunks with relevance scores and source metadata; sidecar
+  `.metadata.json` files supply real page URLs/titles.
 
-The retriever calls `bedrock-agent-runtime:Retrieve` with the student's query and receives the top-K most relevant text chunks along with relevance scores and source document URIs.
+### 5. LLM (Claude Sonnet 5)
 
-### 5. LLM (Claude 3.5 Sonnet)
-
-- **Model ID:** `anthropic.claude-3-5-sonnet-20241022-v2:0`
-- **Invocation:** `bedrock:InvokeModel`
-
-The LLM receives a structured prompt containing:
-1. A **system message** defining the assistant's role and guardrails.
-2. **Retrieved context** chunks from the Knowledge Base.
-3. **Conversation history** (last N turns from DynamoDB).
-4. The **current user message**.
-
-The system prompt instructs Claude to:
-- Only answer based on provided context.
-- Cite sources.
-- Politely decline questions outside CSUCI scope.
-- Never provide medical, legal, or financial advice.
-
-### 6. DynamoDB (Session Store)
-
-- **Table name:** `student-navigator-sessions-{env}`
-- **Partition key:** `sessionId` (String, UUIDv4)
-- **Billing:** PAY_PER_REQUEST (on-demand)
-- **TTL:** `ttl` attribute — sessions auto-expire after 24 hours
-
-**Item schema:**
-
-```json
-{
-  "sessionId": "uuid",
-  "turns": [
-    { "user": "...", "assistant": "...", "timestamp": "ISO8601" }
-  ],
-  "createdAt": "ISO8601",
-  "ttl": 1720000000
-}
-```
-
-### 7. SNS (Escalation Topic)
-
-- **Topic:** `student-navigator-escalation-{env}`
-- **Subscribers:** Email addresses (or SMS) of advising staff
-
-Published messages include:
-- The student's message that triggered the alert.
-- The session ID (so staff can review context).
-- A timestamp.
+- **Model ID:** `us.anthropic.claude-sonnet-5` — an **inference profile**
+  (Claude models on Bedrock are inference-profile only; the bare model ID is
+  rejected for on-demand use).
+- **Invocation:** Bedrock **Converse** API with `toolConfig` and
+  `toolChoice: {any}`.
+- **Note:** Sonnet 5 rejects the `temperature` parameter (deprecated).
+- Conversation history is **client-managed**: the frontend passes prior turns
+  in the request; nothing is stored server-side.
 
 ---
 
-## Data Flow Walkthrough
+## Response contract
 
-```
-1. Student types: "How do I register for classes?"
-2. React frontend POST /chat → API Gateway
-3. API Gateway → Lambda Orchestrator
-4. Lambda: parse body, extract "message" and optional "sessionId"
-5. Lambda → Safety Filter: check_message("How do I register for classes?")
-   → { is_crisis: false, is_escalation: false }
-6. Lambda → Session: get or create session
-7. Lambda → Retriever: retrieve_context("How do I register for classes?")
-   → Bedrock KB returns top-3 chunks from catalog.pdf
-8. Lambda → LLM: generate_response(context, history, message)
-   → Claude returns: "You can register through myCI portal..."
-9. Lambda → Session: save_turn(sessionId, message, answer)
-10. Lambda → API Gateway: { answer, sources, sessionId, type: "normal" }
-11. API Gateway → React frontend → Student sees the answer
-```
+See [api_reference.md](api_reference.md). Summary: every 200 response is
+`{type, message, citations?, escalation?, sessionId, debug?}` where
+`type ∈ {answer, clarify, escalate, decline, crisis}`. Clients render
+`message`, then sidecars by presence. The legacy `answered` boolean is gone.
+
+---
+
+## Evaluation
+
+`eval/golden_set.json` is a human-written answer key (~31 cases) labeled with
+the four-outcome taxonomy (`answerable` / `ambiguous` / `needs_human` /
+`out_of_scope`, plus `crisis`) and expected offices. `eval/run_eval.py` runs
+every case through the **live stack** and reports outcome accuracy, routing
+accuracy, and a confusion matrix. It is a manual, opt-in scorecard (needs AWS
+credentials), not part of the pytest suite. Run it before merging any change
+to tool descriptions or the system prompt, and compare against
+`eval/baseline_results.json`.
 
 ---
 
 ## Security Considerations
 
-### Data Privacy
-- **No PII stored long-term.** Session TTLs auto-delete conversations after 24 hours.
-- **No student authentication** in v1 — sessions are anonymous UUID-based.
-- Messages are processed in-region (`us-west-2`) and are not used for model training (Bedrock policy).
-
-### Network Security
-- All traffic is HTTPS (TLS 1.2+).
-- API Gateway provides DDoS protection via AWS Shield Standard.
-- Lambda runs in an AWS-managed VPC — no public IP exposure.
-
-### Access Control
-- Lambda's IAM role follows **least-privilege**: only the specific DynamoDB table, Bedrock model, KB, and SNS topic are accessible.
-- SAM-managed policies use resource-scoped ARNs.
-
-### Content Safety
-- The safety filter runs **before** any AI processing — crisis content never reaches the LLM.
-- The system prompt includes explicit guardrails against harmful, off-topic, or fabricated responses.
+- **No PII stored server-side** — conversation history lives in the client.
+- All traffic HTTPS; Lambda IAM follows least privilege (specific KB, model
+  profile, SNS topic).
+- Crisis content never reaches the LLM.
+- The model cannot fabricate sources: URLs are resolved server-side from
+  retrieved chunks only.
 
 ### Future Enhancements
-- WAF rules on API Gateway for IP-based rate limiting.
-- CSUCI SSO integration for authenticated sessions.
-- CloudTrail logging for audit trails.
-- VPC endpoints for Bedrock to keep traffic on the AWS backbone.
+
+- WAF / per-user rate limiting on API Gateway
+- CSUCI SSO for authenticated sessions
+- SNS wiring for real-time staff notification on escalations (topic exists in
+  the SAM template; the handler does not publish to it yet)
+- Server-side session persistence if history grows beyond client comfort
 
 ---
 
-## Scalability
-
-| Dimension | Approach |
-|---|---|
-| **Compute** | Lambda auto-scales to 1 000 concurrent executions (soft limit, raisable). |
-| **Database** | DynamoDB on-demand scales to millions of requests/second. |
-| **API** | API Gateway handles 10 000 rps with 5 000-request bursts by default. |
-| **AI Model** | Bedrock manages model capacity; throttling handled via exponential backoff. |
-| **Cost** | Pay-per-request pricing across all services — $0 when idle. |
-
-### Estimated Cost (dev / low-traffic)
-
-| Service | Monthly Estimate |
-|---|---|
-| Lambda | < $1 (well within free tier) |
-| DynamoDB | < $1 (on-demand, low volume) |
-| API Gateway | < $1 |
-| Bedrock (Claude) | ~$5–20 depending on usage |
-| SNS | < $1 |
-| **Total** | **~$10–25/month** |
-
----
-
-## Deployment Environments
-
-| Environment | Stack Name | Use |
-|---|---|---|
-| `dev` | `student-success-navigator` (default) | Development and testing |
-| `prod` | `student-success-navigator` | Production (change parameter) |
-
-Deploy a specific environment:
+## Deployment
 
 ```bash
 sam deploy --parameter-overrides Environment=prod BedrockKBId=YOUR_KB_ID
 ```
+
+`MODEL_ID` is a template parameter; it must be a tool-use-capable Claude
+inference profile. The Lambda IAM policy allows both the inference-profile ARN
+and the underlying cross-region `anthropic.*` foundation-model ARNs.

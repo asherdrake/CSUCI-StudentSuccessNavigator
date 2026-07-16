@@ -1,39 +1,41 @@
 """
 LLM invocation module for the CSUCI Student Success Navigator.
 
-Wraps Amazon Bedrock's **Converse** API to communicate with Claude 3.5
-Sonnet.  The Converse API is preferred over raw ``InvokeModel`` because
-it provides a model-agnostic message interface with built-in token
-management.
+This is the ONLY module that knows the Bedrock Converse API exists. It wraps
+tool-use invocation (our own tiny ``bind_tools``): it sends the tool config,
+forces a tool call via ``toolChoice: {any}``, and unwraps the response into a
+clean list of ``{"name": ..., "input": ...}`` tool calls for the handler.
+
+Structural validation also lives here (``validate_decision``): is each tool
+recognized, are the student-facing fields present, is the combination allowed?
+Domain policy (office coercion, citation range checks, fail-safe escalation)
+belongs to the handler, which has the retrieved chunks and the safety context.
 
 Environment variables
 ---------------------
-- ``MODEL_ID`` — Bedrock model identifier.  Defaults to
-  ``meta.llama3-70b-instruct-v1:0``.
+- ``MODEL_ID`` — Bedrock model/inference-profile identifier. Claude models are
+  inference-profile only; defaults to ``us.anthropic.claude-sonnet-5``.
 """
 
 import logging
 import os
+from typing import Optional
+
 import boto3
+
+from tools import ANSWER_TOOL, CLARIFY_TOOL, DECLINE_TOOL, ESCALATE_TOOL
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-_MODEL_ID: str = os.environ.get(
-    "MODEL_ID",
-    "meta.llama3-70b-instruct-v1:0",
-)
+_DEFAULT_MODEL_ID = "us.anthropic.claude-sonnet-5"
 
 # Lazy-initialised client
 _client = None
 
 
 def _get_client():
-    """Return the ``bedrock-runtime`` client, creating it on first use.
-
-    Returns:
-        boto3 client for the ``bedrock-runtime`` service.
-    """
+    """Return the ``bedrock-runtime`` client, creating it on first use."""
     global _client
     if _client is None:
         _client = boto3.client("bedrock-runtime")
@@ -41,155 +43,305 @@ def _get_client():
     return _client
 
 
+def _get_model_id() -> str:
+    """Read MODEL_ID at request time so dev_server's late load_env() works."""
+    return os.environ.get("MODEL_ID", _DEFAULT_MODEL_ID)
+
+
+def _guardrail_config() -> Optional[dict]:
+    """Return the Converse ``guardrailConfig`` block, or None if unconfigured.
+
+    Read at request time (like MODEL_ID). When ``GUARDRAIL_ID`` is unset the
+    tool-use call runs without a Bedrock Guardrail — the deterministic safety
+    filter and the grounding/citation checks still apply, so this degrades
+    gracefully in local/dev setups that have no guardrail provisioned.
+    """
+    guardrail_id = os.environ.get("GUARDRAIL_ID")
+    if not guardrail_id:
+        return None
+    return {
+        "guardrailIdentifier": guardrail_id,
+        "guardrailVersion": os.environ.get("GUARDRAIL_VERSION", "DRAFT"),
+        "trace": "enabled",
+    }
+
+
+def check_guardrail_only(text: str) -> dict:
+    """Run the Bedrock Guardrail against raw text via the standalone
+    ``ApplyGuardrail`` API, with no LLM call involved.
+
+    Used to check the student's raw message for content-safety issues
+    (denied topics, abusive language, etc.) before RAG retrieval / the
+    KB-relevance score floor gets a chance to short-circuit the request —
+    those are a separate, unrelated check and would otherwise prevent the
+    guardrail from ever seeing messages with a low KB-relevance score.
+
+    Args:
+        text: Raw text to check (typically the student's message).
+
+    Returns:
+        A dict with keys:
+            - ``intervened``: True if the guardrail acted on the text.
+            - ``action_reason``: Bedrock's ``actionReason`` string
+              (e.g. ``"Guardrail blocked."`` vs ``"...masked."``), empty
+              if the guardrail didn't intervene.
+            - ``blocked_message``: the guardrail's configured
+              blocked-message text, if it intervened with a block
+              (empty string otherwise).
+            - ``trace``: the raw assessment object for logging.
+
+    Note:
+        Failures here are swallowed (logged only) and treated as
+        "did not intervene" — this check is a pre-filter, not the sole
+        safety mechanism, and the existing Converse-call guardrail check
+        still runs downstream as a second layer.
+    """
+    guardrail_id = os.environ.get("GUARDRAIL_ID")
+    if not guardrail_id:
+        # No guardrail provisioned (e.g. local dev) — treat as not intervened.
+        return {"intervened": False, "action_reason": "", "blocked_message": "", "trace": {}}
+    try:
+        response = _get_client().apply_guardrail(
+            guardrailIdentifier=guardrail_id,
+            guardrailVersion=os.environ.get("GUARDRAIL_VERSION", "DRAFT"),
+            source="INPUT",
+            content=[{"text": {"text": text}}],
+        )
+    except Exception:
+        logger.exception("Standalone ApplyGuardrail check failed; treating as not intervened.")
+        return {"intervened": False, "action_reason": "", "blocked_message": "", "trace": {}}
+
+    intervened = response.get("action", "NONE") == "GUARDRAIL_INTERVENED"
+
+    blocked_message = ""
+    if intervened:
+        output_blocks = response.get("outputs", [])
+        blocked_message = "".join(
+            block.get("text", "") for block in output_blocks if "text" in block
+        ).strip()
+
+    return {
+        "intervened": intervened,
+        "action_reason": response.get("actionReason", ""),
+        "blocked_message": blocked_message,
+        "trace": response.get("assessments", []),
+    }
+
+
 def format_messages_for_converse(
     conversation_history: list[dict],
     current_user_message: str,
 ) -> list[dict]:
-    """Convert internal session turns into Bedrock Converse message format.
+    """Convert client-passed history turns into Bedrock Converse format.
 
-    The Bedrock Converse API expects messages in this shape::
-
-        [
-            {"role": "user",      "content": [{"text": "..."}]},
-            {"role": "assistant", "content": [{"text": "..."}]},
-            ...
-        ]
-
-    Our client-passed history stores each turn as::
-
-        {"role": "user"|"assistant", "content": "..."}
-
-    This helper wraps the ``content`` string in the required ``[{"text": ...}]``
-    list structure, then appends the current user message at the end.
-    To prevent context token limit overflow on Bedrock, we only retain
-    the last 10 turns (5 user-assistant exchanges) of history.
-
-    Args:
-        conversation_history: Prior turns passed directly from the client.
-        current_user_message: The latest message from the student.
-
-    Returns:
-        A list of messages in Bedrock Converse format.
+    Client history stores turns as ``{"role": "user"|"assistant", "content": str}``;
+    Converse wants ``{"role": ..., "content": [{"text": str}]}``.
     """
     messages: list[dict] = []
 
-    # Retain only the last 10 turns to avoid exceeding the 8192 context token limit
-    pruned_history = (
-        conversation_history[-10:]
-        if len(conversation_history) > 10
-        else conversation_history
-    )
-
-    for turn in pruned_history:
+    for turn in conversation_history:
         role = turn.get("role", "user")
         content = turn.get("content", "")
-        messages.append(
-            {
-                "role": role,
-                "content": [{"text": content}],
-            }
-        )
+        messages.append({"role": role, "content": [{"text": content}]})
 
-    # Append the current user message
     messages.append(
-        {
-            "role": "user",
-            "content": [{"text": current_user_message}],
-        }
+        {"role": "user", "content": [{"text": current_user_message}]}
     )
-
     return messages
+
+
+def extract_tool_calls(response: dict) -> list[dict]:
+    """Unwrap a Converse response into ``[{"name": str, "input": dict}, ...]``.
+
+    Ignores any interleaved text blocks — with ``toolChoice: any`` the tool
+    calls are the decision; free text alongside them carries no contract.
+    """
+    output_message = response.get("output", {}).get("message", {})
+    content_blocks = output_message.get("content", [])
+
+    calls: list[dict] = []
+    for block in content_blocks:
+        tool_use = block.get("toolUse")
+        if tool_use and tool_use.get("name"):
+            calls.append(
+                {
+                    "name": tool_use["name"],
+                    "input": tool_use.get("input") or {},
+                }
+            )
+    return calls
 
 
 def invoke_model(
     system_prompt: str,
     messages: list[dict],
-    temperature: float = 0.2,
+    tool_config: dict,
     max_tokens: int = 1024,
-) -> str:
-    """Invoke Claude 3.5 Sonnet via the Bedrock Converse API.
+) -> list[dict]:
+    """Invoke the model with forced tool-use and return the parsed tool calls.
+
+    When a Bedrock Guardrail is configured (``GUARDRAIL_ID`` /
+    ``GUARDRAIL_VERSION`` env vars) it is applied to this call's input and
+    output as a second content-safety layer.
+
+    Note: no ``temperature`` — Claude Sonnet 5 on Bedrock rejects it as
+    deprecated (ValidationException).
 
     Args:
-        system_prompt: The system-level instruction prompt (built from
-            :data:`prompts.SYSTEM_PROMPT_TEMPLATE`).
-        messages:      Conversation messages in Bedrock Converse format
-            (as returned by :func:`format_messages_for_converse`).
-        temperature:   Sampling temperature (0–1).  Lower values produce
-            more deterministic answers.  Default ``0.3``.
-        max_tokens:    Maximum tokens in the response.  Default ``1024``.
+        system_prompt: The thin global system prompt (with numbered passages).
+        messages:      Converse-format messages.
+        tool_config:   ``tools.TOOL_CONFIG`` (tools + toolChoice).
+        max_tokens:    Response cap.
 
     Returns:
-        The assistant's text response as a plain string.
+        A list of ``{"name": str, "input": dict}`` tool calls (possibly empty
+        if the model produced no usable tool call, or if the guardrail blocked
+        the output — the handler treats an empty/unusable result as a fail-safe
+        escalation).
 
     Raises:
-        Exception: Re-raised after logging if the Bedrock call fails.
+        Exception: Re-raised after logging if the Bedrock call itself fails
+        (the handler maps this to HTTP 500, distinct from unusable output).
     """
+    model_id = _get_model_id()
+    converse_kwargs: dict = {
+        "modelId": model_id,
+        "system": [{"text": system_prompt}],
+        "messages": messages,
+        "toolConfig": tool_config,
+        "inferenceConfig": {"maxTokens": max_tokens},
+    }
+    guardrail_config = _guardrail_config()
+    if guardrail_config is not None:
+        converse_kwargs["guardrailConfig"] = guardrail_config
     try:
-        response = _get_client().converse(
-            modelId=_MODEL_ID,
-            system=[{"text": system_prompt}],
-            messages=messages,
-            inferenceConfig={
-                "temperature": temperature,
-                "maxTokens": max_tokens,
-            },
-        )
+        response = _get_client().converse(**converse_kwargs)
     except Exception:
         logger.exception(
-            "Failed to invoke Bedrock model %s via Converse API.", _MODEL_ID
+            "Failed to invoke Bedrock model %s via Converse API.", model_id
         )
         raise
 
-    # Extract assistant text from the response
-    output_message = response.get("output", {}).get("message", {})
-    content_blocks = output_message.get("content", [])
-
-    # The Converse API may return multiple content blocks; concatenate all
-    # text blocks into a single string.
-    assistant_text = "".join(
-        block.get("text", "")
-        for block in content_blocks
-        if "text" in block
-    )
-
-    if not assistant_text:
-        logger.warning("Bedrock Converse returned an empty response.")
-
-    # Log token usage for cost monitoring
     usage = response.get("usage", {})
     logger.info(
-        "Bedrock Converse usage — input_tokens: %s, output_tokens: %s",
+        "Bedrock Converse usage — input_tokens: %s, output_tokens: %s, stop: %s",
         usage.get("inputTokens", "N/A"),
         usage.get("outputTokens", "N/A"),
+        response.get("stopReason", "N/A"),
     )
 
-    return assistant_text
+    return extract_tool_calls(response)
 
 
 def translate_query_to_english(query: str) -> str:
-    """Translate the student's query to English to optimize vector search.
+    """Translate a student query to English to optimize vector search.
 
-    If already in English, it returns the query unchanged.
+    The knowledge base is English, so non-English queries embed poorly. This
+    is a plain Converse call (no tools, small budget); on ANY failure it
+    falls back to the original query — retrieval degrades, nothing breaks.
     """
     system_prompt = (
-        "You are a translation helper. Translate the user's message into plain English. "
-        "If it is already in English, return it exactly as is. "
-        "Output ONLY the final English translation text, with no introduction, no surrounding quotes, and no extra notes."
+        "You are a translation helper. Translate the user's message into "
+        "plain English. If it is already in English, return it exactly as "
+        "is. Output ONLY the final English translation text, with no "
+        "introduction, no surrounding quotes, and no extra notes."
     )
-    messages = [
-        {
-            "role": "user",
-            "content": [{"text": query}]
-        }
-    ]
     try:
-        translation = invoke_model(
-            system_prompt=system_prompt,
-            messages=messages,
-            temperature=0.0,
-            max_tokens=64
+        response = _get_client().converse(
+            modelId=_get_model_id(),
+            system=[{"text": system_prompt}],
+            messages=[{"role": "user", "content": [{"text": query}]}],
+            inferenceConfig={"maxTokens": 128},
         )
-        return translation.strip().strip('"').strip("'")
+        blocks = response.get("output", {}).get("message", {}).get("content", [])
+        translation = "".join(b.get("text", "") for b in blocks if "text" in b)
+        translation = translation.strip().strip('"').strip("'")
+        return translation or query
     except Exception:
         logger.warning("Query translation failed, falling back to original text.")
         return query
+
+
+# ---------------------------------------------------------------------------
+# Structural validation
+# ---------------------------------------------------------------------------
+
+_KNOWN_TOOLS = {ANSWER_TOOL, CLARIFY_TOOL, ESCALATE_TOOL, DECLINE_TOOL}
+
+
+def _call_is_well_formed(call: dict) -> bool:
+    """Check the student-facing required fields for a single tool call.
+
+    Internal fields (``reason``, ``office``) are deliberately lenient here —
+    the handler coerces or defaults them. The fields the student reads
+    (``answer``, ``question``) must be non-empty strings.
+    """
+    name = call.get("name")
+    inputs = call.get("input") or {}
+
+    if name == ANSWER_TOOL:
+        answer = inputs.get("answer")
+        citations = inputs.get("citations")
+        return bool(
+            isinstance(answer, str)
+            and answer.strip()
+            and isinstance(citations, list)
+        )
+    if name == CLARIFY_TOOL:
+        question = inputs.get("question")
+        return bool(isinstance(question, str) and question.strip())
+    if name == ESCALATE_TOOL:
+        # office/reason are coerced by handler policy; presence not required.
+        return True
+    if name == DECLINE_TOOL:
+        return True
+    return False
+
+
+def validate_decision(calls: list[dict]) -> Optional[dict]:
+    """Structurally validate the model's tool calls into a decision.
+
+    Valid shapes:
+      - exactly one well-formed call of a known tool, or
+      - exactly two calls forming the one allowed pair:
+        ``answer_from_context`` + ``escalate_to_office``.
+
+    Returns:
+        ``{"primary": call, "escalation": call | None}`` where ``primary`` is
+        the call that drives the response ``type`` (for the pair: the answer),
+        or ``None`` when the output is structurally unusable (the handler
+        fail-safes to a human).
+    """
+    known = [c for c in calls if c.get("name") in _KNOWN_TOOLS]
+    if len(known) != len(calls):
+        unknown = [c.get("name") for c in calls if c.get("name") not in _KNOWN_TOOLS]
+        logger.warning("Model called unknown tool(s): %s", unknown)
+        return None
+
+    if len(calls) == 1:
+        call = calls[0]
+        if not _call_is_well_formed(call):
+            logger.warning(
+                "Tool call %s is missing required fields: %s",
+                call.get("name"),
+                call.get("input"),
+            )
+            return None
+        if call["name"] == ESCALATE_TOOL:
+            return {"primary": call, "escalation": call}
+        return {"primary": call, "escalation": None}
+
+    if len(calls) == 2:
+        names = {c["name"] for c in calls}
+        if names == {ANSWER_TOOL, ESCALATE_TOOL}:
+            answer_call = next(c for c in calls if c["name"] == ANSWER_TOOL)
+            escalate_call = next(c for c in calls if c["name"] == ESCALATE_TOOL)
+            if _call_is_well_formed(answer_call):
+                return {"primary": answer_call, "escalation": escalate_call}
+            logger.warning("Pair rejected: answer call malformed.")
+            return None
+        logger.warning("Model returned a disallowed tool pair: %s", names)
+        return None
+
+    logger.warning("Model returned %d tool calls (expected 1 or 2).", len(calls))
+    return None

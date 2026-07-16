@@ -1,9 +1,16 @@
 """
 Lambda orchestrator handler for the CSUCI Student Success Navigator.
 
-Processes student messages through safety checks, RAG retrieval (with score floor),
-unanswered sentinels, citation validation, and dynamic escalation routing.
-All interactions are logged in structured JSON to CloudWatch for observability.
+Flow: crisis check (deterministic, pre-LLM) → RAG retrieval (always) → one
+Converse tool-use call → validate + dispatch the structured decision into the
+type-discriminated API contract. The model decides answer / clarify / escalate
+/ decline by tool selection (see tools.py); this handler applies policy:
+citation range checks, office coercion, fail-safe escalation, and the
+explicit-human-request backstop.
+
+Failure policy: unusable model output fails safe to a human handoff
+(general_support); Bedrock/API errors return HTTP 500 (retryable) instead.
+All interactions are logged in structured JSON to CloudWatch.
 """
 
 import json
@@ -11,18 +18,40 @@ import logging
 import os
 import sys
 import uuid
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-# Make sure safety_filter and orchestrator modules are importable
-_PARENT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-if _PARENT_DIR not in sys.path:
-    sys.path.insert(0, _PARENT_DIR)
+# Make sure safety_filter (lambda/) and sibling orchestrator modules
+# (retriever, prompts, llm, router — lambda/orchestrator/) are importable
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_PARENT_DIR = os.path.join(_THIS_DIR, "..")
+for _path in (_PARENT_DIR, _THIS_DIR):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
 from safety_filter import check_message  # noqa: E402
 from retriever import retrieve_context  # noqa: E402
-from prompts import ESCALATION_TEMPLATE, SYSTEM_PROMPT_TEMPLATE  # noqa: E402
-from llm import format_messages_for_converse, invoke_model, translate_query_to_english  # noqa: E402
-from router import route_query  # noqa: E402
+from prompts import (  # noqa: E402
+    DECLINE_MESSAGE,
+    ESCALATION_ADDENDUM,
+    ESCALATION_MESSAGE,
+    SPANISH_OVERRIDE,
+    SYSTEM_PROMPT_TEMPLATE,
+)
+from llm import (  # noqa: E402
+    check_guardrail_only,
+    format_messages_for_converse,
+    invoke_model,
+    translate_query_to_english,
+    validate_decision,
+)
+from router import DEFAULT_OFFICE_KEY, build_escalation  # noqa: E402
+from tools import (  # noqa: E402
+    ANSWER_TOOL,
+    CLARIFY_TOOL,
+    DECLINE_TOOL,
+    ESCALATE_TOOL,
+    TOOL_CONFIG,
+)
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -35,22 +64,27 @@ _CORS_HEADERS: Dict[str, str] = {
     "Content-Type": "application/json",
 }
 
-# Score threshold floor for RAG matches
-SCORE_FLOOR = 0.40
 
-# Fallback clarification text to prompt student before ticket creation
-CLARIFICATION_TEXT = (
-    "I'm sorry, I couldn't find enough matching information about that in our database. "
-    "Could you please rephrase or provide a bit more details so I can find the right info?"
+def _debug_chunks_enabled() -> bool:
+    """Whether to log/return retrieved chunks (set DEBUG_CHUNKS=1 in .env).
+
+    Read at REQUEST time, not import time: dev_server.py imports this module
+    before it calls load_env(), so a module-level constant would capture the
+    flag before .env is loaded and always be False.
+    """
+    return os.environ.get("DEBUG_CHUNKS", "").lower() in ("1", "true", "yes")
+
+
+# Bedrock Guardrails has no native input length limit (confirmed against the
+# Converse API schema), so oversized input is rejected here before any
+# retrieval or Bedrock call is made, to save cost/latency.
+MAX_INPUT_LENGTH = 1000
+
+# Shown when a message exceeds MAX_INPUT_LENGTH (rendered as a clarify turn).
+INPUT_TOO_LONG_MESSAGE = (
+    "That message is a bit long — could you shorten it to a specific question? "
+    "I can help best with focused questions about CSUCI resources."
 )
-
-
-def _has_already_clarified(history: List[dict]) -> bool:
-    """Scan history from bottom up to see if the last bot response was a clarification prompt."""
-    for turn in reversed(history):
-        if turn.get("role") == "assistant":
-            return turn.get("content") == CLARIFICATION_TEXT
-    return False
 
 
 def _build_response(status_code: int, body: Dict[str, Any]) -> Dict[str, Any]:
@@ -63,91 +97,63 @@ def _build_response(status_code: int, body: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _format_retrieved_chunks(chunks: List[dict]) -> str:
-    """Format RAG context passages into a readable block for the LLM prompt."""
+    """Format RAG passages into the numbered block the model cites by number."""
     if not chunks:
-        return "(No relevant context was found in the knowledge base.)"
+        return "(No relevant passages were found in the knowledge base.)"
 
     lines: List[str] = []
     for i, chunk in enumerate(chunks, start=1):
         title = chunk.get("source_title", "Unknown Source")
-        url = chunk.get("source_url", "")
         text = chunk.get("text", "").strip()
-        # Truncate extremely long scraped roadmap pages to prevent token limits overflow
-        if len(text) > 2500:
-            text = text[:2500] + "\n... [truncated for length] ..."
-        source_ref = f"[{title}]({url})" if url else title
-        lines.append(f"**Passage {i}** (source: {source_ref}):\n{text}")
+        # Deliberately no URL here — the model cites by passage number only,
+        # and code resolves numbers to trusted URLs afterwards.
+        lines.append(f"**Passage {i}** (source: {title}):\n{text}")
 
     return "\n\n".join(lines)
 
 
-def _extract_unique_sources(chunks: List[dict]) -> List[Dict[str, str]]:
-    """Return deduplicated list of source metadata from chunks."""
-    seen_urls = set()
-    sources = []
-    for chunk in chunks:
-        url = chunk.get("source_url", "")
-        title = chunk.get("source_title", "Unknown Source")
-        if url and url not in seen_urls:
-            seen_urls.add(url)
-            sources.append({"title": title, "url": url})
-    return sources
+def _resolve_citations(
+    raw_citations: List[Any], chunks: List[dict]
+) -> Optional[List[Dict[str, Any]]]:
+    """Resolve model-cited passage numbers into trusted source entries.
 
-
-def _validate_citations(answer: str, sources: List[Dict[str, str]]) -> bool:
-    """Verify that an answered response contains at least one retrieved URL citation.
-
-    Protects against the LLM inventing facts outside our KB sources.
+    Returns a deduplicated list of ``{title, url, passages: [N, ...]}`` built
+    ONLY from the retrieved chunks — the model never supplies a URL. Returns
+    ``None`` when the citations are unusable (empty, non-integer, or out of
+    range), which the caller treats as an ungrounded answer.
     """
-    if not sources:
-        return False
-    
-    # Check if the answer text references any of the retrieved source URLs
-    for src in sources:
-        url = src.get("url", "")
-        if url and url in answer:
-            return True
-    return False
+    if not raw_citations:
+        return None
 
+    numbers: List[int] = []
+    for item in raw_citations:
+        try:
+            n = int(item)
+        except (TypeError, ValueError):
+            return None
+        if n < 1 or n > len(chunks):
+            return None
+        if n not in numbers:
+            numbers.append(n)
 
-def _log_interaction(
-    *,
-    status: str,
-    message: str,
-    answered: bool,
-    safety_result: dict,
-    chunks_count: int,
-    top_score: float,
-    answer: str | None,
-    citations: list,
-    escalation: dict | None,
-    session_id: str
-) -> None:
-    """Log the request details to CloudWatch in a structured JSON schema."""
-    logger.info(
-        json.dumps(
-            {
-                "interaction": {
-                    "status": status,
-                    "sessionId": session_id,
-                    "message": message,
-                    "answered": answered,
-                    "safety": {
-                        "crisis": safety_result.get("crisis", False),
-                        "user_requested_escalation": safety_result.get("escalation", {}).get("needed", False)
-                    },
-                    "retrieval": {
-                        "chunks_returned": chunks_count,
-                        "top_score": top_score
-                    },
-                    "answer_preview": (answer[:300] + "...") if answer else None,
-                    "citations_count": len(citations),
-                    "escalation_office": escalation.get("office") if escalation else None,
-                    "escalation_trigger": escalation.get("trigger") if escalation else None
-                }
-            }
+    resolved: List[Dict[str, Any]] = []
+    for n in numbers:
+        chunk = chunks[n - 1]
+        url = chunk.get("source_url", "")
+        title = chunk.get("source_title", "") or "Unknown Source"
+        existing = next(
+            (c for c in resolved if c["url"] == url and c["title"] == title), None
         )
-    )
+        if existing:
+            existing["passages"].append(n)
+        else:
+            resolved.append({"title": title, "url": url, "passages": [n]})
+    return resolved
+
+
+def _log_interaction(**fields: Any) -> None:
+    """Log the request outcome to CloudWatch in a structured JSON schema."""
+    logger.info(json.dumps({"interaction": fields}, default=str))
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +164,7 @@ def _log_interaction(
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """Lambda entry point for the Student Success Navigator."""
     logger.info("Received event: %s", json.dumps(event, default=str))
+    debug_chunks = _debug_chunks_enabled()
 
     # --- CORS Preflight ---
     http_method = event.get("httpMethod", "") or event.get(
@@ -182,323 +189,270 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     if not message:
         return _build_response(400, {"error": "Missing required field: 'message'."})
 
-    # Client-passed multi-turn history & session identifier
     history: List[dict] = body.get("history", [])
     session_id: str = body.get("sessionId") or str(uuid.uuid4())
+    # Explicit UI language selection. "es" forces Spanish replies and
+    # translates the query for retrieval; "en" (default) leaves the prompt's
+    # auto-detect rule in charge, so any-language questions still work.
     language_code = body.get("language", "en")
-    target_language = "Spanish" if language_code == "es" else "English"
 
-    # --- 2. Crisis Check (Highest Priority pre-model filter) ---
+    # retrieved_chunks is referenced by respond()'s debug branch and by the
+    # early exits below (crisis/length/small-talk/guardrail), so it must exist
+    # before the first respond() call. Real retrieval happens in Section 3.
+    retrieved_chunks: List[dict] = []
+
+    def respond(
+        rtype: str,
+        rmessage: str,
+        *,
+        citations: Optional[List[dict]] = None,
+        escalation: Optional[dict] = None,
+        log: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Assemble the type-discriminated contract, log, and return 200."""
+        _log_interaction(
+            type=rtype,
+            sessionId=session_id,
+            message=message,
+            message_preview=(rmessage[:300] + "...") if len(rmessage) > 300 else rmessage,
+            citations_count=len(citations) if citations else 0,
+            escalation_office=escalation.get("office") if escalation else None,
+            **(log or {}),
+        )
+        response_body: Dict[str, Any] = {
+            "type": rtype,
+            "message": rmessage,
+            "sessionId": session_id,
+        }
+        if citations is not None:
+            response_body["citations"] = citations
+        if escalation is not None:
+            response_body["escalation"] = escalation
+        if debug_chunks and rtype != "crisis":
+            response_body["debug"] = {"retrieved_chunks": retrieved_chunks}
+        return _build_response(200, response_body)
+
+    # --- 1b. Input Length Guard (before any retrieval/Bedrock calls) ---
+    # Bedrock Guardrails has no native input length limit, so oversized input
+    # is rejected here (as a clarify turn) before any retrieval/Bedrock call.
+    if len(message) > MAX_INPUT_LENGTH:
+        logger.warning("Input length guard tripped (length=%d).", len(message))
+        return respond("clarify", INPUT_TOO_LONG_MESSAGE)
+
+    # --- 2. Crisis Check (deterministic, highest priority, pre-model) ---
     safety_result = check_message(message)
     if safety_result["crisis"]:
         logger.warning("Crisis detected - bypassing LLM.")
-        crisis_answer = safety_result["crisis_response"]
-        _log_interaction(
-            status="crisis",
-            message=message,
-            answered=True,
-            safety_result=safety_result,
-            chunks_count=0,
-            top_score=0.0,
-            answer=crisis_answer,
-            citations=[],
-            escalation=None,
-            session_id=session_id
-        )
-        return _build_response(
-            200,
-            {
-                "answer": crisis_answer,
-                "answered": True,
-                "citations": [],
-                "escalation": None,
-                "sessionId": session_id,
-            },
-        )
+        return respond("crisis", safety_result["crisis_response"])
 
-    # --- 3. RAG Retrieval ---
+    user_requested_human = safety_result["escalation"]["needed"]
+
+    # --- 2a. Small-Talk Check (greetings/closings — before retrieval) ---
+    # Pure greetings ("hi") and closings ("thanks, I'm done") aren't real
+    # questions and would waste a retrieval + model round-trip. Answer them
+    # here with a canned, friendly response before any Bedrock call.
+    if safety_result.get("smalltalk_response"):
+        return respond("answer", safety_result["smalltalk_response"], citations=None)
+
+    # --- 2b. Guardrail Check on Raw Message (before retrieval) ---
+    # Runs the Bedrock Guardrail directly on the raw message first, so
+    # denied-topic / content-policy blocks apply regardless of whether the
+    # message would have retrieved any relevant CSUCI passages. (No-ops when
+    # no guardrail is configured.) A hard block short-circuits as a decline;
+    # a masked-only intervention (e.g. PII redaction) falls through unchanged.
+    early_guardrail_result = check_guardrail_only(message)
+    logger.info(
+        "GUARDRAIL_CHECK_EARLY: sessionId=%s intervened=%s",
+        session_id,
+        early_guardrail_result["intervened"],
+    )
+    if early_guardrail_result["intervened"]:
+        logger.warning(
+            "GUARDRAIL_INTERVENED_EARLY: sessionId=%s trace=%s",
+            session_id,
+            json.dumps(early_guardrail_result["trace"], default=str),
+        )
+        is_masked_only = (
+            "masked" in early_guardrail_result["action_reason"].lower()
+            and "blocked" not in early_guardrail_result["action_reason"].lower()
+        )
+        if not is_masked_only and early_guardrail_result["blocked_message"]:
+            return respond(
+                "decline",
+                early_guardrail_result["blocked_message"],
+                log={"status": "guardrail_blocked_early"},
+            )
+        # Masked-only (e.g. PII in the raw message itself): not a block,
+        # fall through to the normal pipeline unchanged.
+
+    # --- 3. RAG Retrieval (always — no score-floor short-circuit) ---
+    # The KB is English: translate Spanish-mode queries before vector search.
     if language_code == "es":
         search_query = translate_query_to_english(message)
+        logger.info(
+            "Original query: '%s' -> Search query: '%s'", message, search_query
+        )
     else:
         search_query = message
 
-    logger.info("Original query: '%s' -> Search query: '%s'", message, search_query)
-    retrieved_chunks = retrieve_context(search_query, top_k=3)
+    retrieved_chunks = retrieve_context(search_query, top_k=5)
     top_score = retrieved_chunks[0]["score"] if retrieved_chunks else 0.0
 
-    # Extract unique source list
-    citations = _extract_unique_sources(retrieved_chunks)
-
-    # --- 4. Hallucination Guardrail 1: Score Floor check ---
-    if not retrieved_chunks or top_score < SCORE_FLOOR:
-        logger.warning(
-            "Low retrieval score (top_score=%f < floor=%f) - checking clarification loop.",
-            top_score,
-            SCORE_FLOOR,
+    if debug_chunks:
+        logger.info(
+            "=== Retrieved %d chunk(s) for: %s ===", len(retrieved_chunks), message
         )
-        
-        if _has_already_clarified(history):
-            # Already clarified once, perform full human escalation
-            context_text = (
-                f"Zero matching passages retrieved." if not retrieved_chunks
-                else f"Top match score was {top_score:.4f} which is below the floor of {SCORE_FLOOR}."
-            )
-            escalation_payload = route_query(message, context_text)
-            escalation_payload["trigger"] = "no_answer"
-            
-            if safety_result["escalation"]["needed"]:
-                escalation_payload["trigger"] = "user_requested"
-
-            _log_interaction(
-                status="low_score_escalate",
-                message=message,
-                answered=False,
-                safety_result=safety_result,
-                chunks_count=len(retrieved_chunks),
-                top_score=top_score,
-                answer=None,
-                citations=[],
-                escalation=escalation_payload,
-                session_id=session_id
-            )
-            return _build_response(
-                200,
-                {
-                    "answer": None,
-                    "answered": False,
-                    "citations": [],
-                    "escalation": escalation_payload,
-                    "sessionId": session_id,
-                },
-            )
-        else:
-            # First turn failure, prompt for clarification
-            _log_interaction(
-                status="low_score_clarify",
-                message=message,
-                answered=True,
-                safety_result=safety_result,
-                chunks_count=len(retrieved_chunks),
-                top_score=top_score,
-                answer=CLARIFICATION_TEXT,
-                citations=[],
-                escalation=None,
-                session_id=session_id
-            )
-            return _build_response(
-                200,
-                {
-                    "answer": CLARIFICATION_TEXT,
-                    "answered": True,
-                    "citations": [],
-                    "escalation": None,
-                    "sessionId": session_id,
-                },
+        for i, c in enumerate(retrieved_chunks, start=1):
+            logger.info(
+                "[chunk %d] score=%.4f | title=%s | url=%s\n%s\n",
+                i, c["score"], c.get("source_title", ""), c.get("source_url", ""),
+                c.get("text", "")[:600],
             )
 
-    # --- 5. Build system prompt ---
-    formatted_chunks = _format_retrieved_chunks(retrieved_chunks)
+    # --- 4. Build prompt & invoke the model with forced tool-use ---
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
-        retrieved_chunks=formatted_chunks,
-        conversation_history="(Conversation history managed client-side.)",
-        target_language=target_language
+        retrieved_chunks=_format_retrieved_chunks(retrieved_chunks)
     )
-
-    # --- 6. Invoke LLM (Claude 3.5 Sonnet, temp=0.2) ---
+    if language_code == "es":
+        system_prompt += SPANISH_OVERRIDE
     converse_messages = format_messages_for_converse(history, message)
 
     try:
-        assistant_answer = invoke_model(
+        tool_calls = invoke_model(
             system_prompt=system_prompt,
             messages=converse_messages,
+            tool_config=TOOL_CONFIG,
         )
     except Exception:
+        # Infrastructure failure — retryable 500, NOT an escalation.
         logger.exception("LLM invocation failed.")
         return _build_response(
             500,
             {"error": "Sorry, I am having trouble connecting to Bedrock. Please try again later."},
         )
 
-    # Clean LLM output whitespace
-    assistant_answer = assistant_answer.strip()
+    # Note: when a Bedrock Guardrail blocks the model's OUTPUT during the
+    # Converse call, no valid tool call is produced, so tool_calls is empty
+    # and the request safely falls through to fail_safe() below (human
+    # handoff). Input content-safety is handled earlier by the standalone
+    # early guardrail check (Section 2b).
+    common_log = {
+        "chunks_returned": len(retrieved_chunks),
+        "top_score": top_score,
+        "user_requested_human": user_requested_human,
+        "tools_called": [c.get("name") for c in tool_calls],
+    }
 
-    # --- 7. Hallucination Guardrail 2: NO_ANSWER Sentinel Check ---
-    if assistant_answer == "NO_ANSWER":
-        logger.warning("LLM returned NO_ANSWER sentinel. Checking clarification loop.")
-        
-        if _has_already_clarified(history):
-            # Already clarified, perform human escalation
-            escalation_payload = route_query(message, formatted_chunks)
-            escalation_payload["trigger"] = "no_answer"
-            
-            if safety_result["escalation"]["needed"]:
-                escalation_payload["trigger"] = "user_requested"
-
-            _log_interaction(
-                status="sentinel_escalate",
-                message=message,
-                answered=False,
-                safety_result=safety_result,
-                chunks_count=len(retrieved_chunks),
-                top_score=top_score,
-                answer=None,
-                citations=[],
-                escalation=escalation_payload,
-                session_id=session_id
-            )
-            return _build_response(
-                200,
-                {
-                    "answer": None,
-                    "answered": False,
-                    "citations": [],
-                    "escalation": escalation_payload,
-                    "sessionId": session_id,
-                },
-            )
-        else:
-            # First turn failure, prompt for clarification
-            _log_interaction(
-                status="sentinel_clarify",
-                message=message,
-                answered=True,
-                safety_result=safety_result,
-                chunks_count=len(retrieved_chunks),
-                top_score=top_score,
-                answer=CLARIFICATION_TEXT,
-                citations=[],
-                escalation=None,
-                session_id=session_id
-            )
-            return _build_response(
-                200,
-                {
-                    "answer": CLARIFICATION_TEXT,
-                    "answered": True,
-                    "citations": [],
-                    "escalation": None,
-                    "sessionId": session_id,
-                },
-            )
-
-    # --- 8. Hallucination Guardrail 3: Citation Validation Check ---
-    if not _validate_citations(assistant_answer, citations):
-        logger.warning(
-            "Citation validation failed (Answer contains no URLs from citations). Checking clarification loop."
+    def fail_safe(why: str) -> Dict[str, Any]:
+        """Unusable model output → route the student to a human, loudly."""
+        logger.error("FAIL-SAFE ESCALATION: %s (tools=%s)", why, tool_calls)
+        escalation = build_escalation(
+            DEFAULT_OFFICE_KEY,
+            f"Automatic handoff — the assistant could not produce a usable "
+            f"response ({why}).",
+            message,
+            session_id,
         )
-        
-        if _has_already_clarified(history):
-            # Already clarified, perform human escalation
-            escalation_payload = route_query(message, formatted_chunks)
-            escalation_payload["trigger"] = "no_answer"
-            
-            if safety_result["escalation"]["needed"]:
-                escalation_payload["trigger"] = "user_requested"
-
-            _log_interaction(
-                status="citation_validation_failed_escalate",
-                message=message,
-                answered=False,
-                safety_result=safety_result,
-                chunks_count=len(retrieved_chunks),
-                top_score=top_score,
-                answer=None,
-                citations=[],
-                escalation=escalation_payload,
-                session_id=session_id
-            )
-            return _build_response(
-                200,
-                {
-                    "answer": None,
-                    "answered": False,
-                    "citations": [],
-                    "escalation": escalation_payload,
-                    "sessionId": session_id,
-                },
-            )
-        else:
-            # First turn failure, prompt for clarification
-            _log_interaction(
-                status="citation_validation_clarify",
-                message=message,
-                answered=True,
-                safety_result=safety_result,
-                chunks_count=len(retrieved_chunks),
-                top_score=top_score,
-                answer=CLARIFICATION_TEXT,
-                citations=[],
-                escalation=None,
-                session_id=session_id
-            )
-            return _build_response(
-                200,
-                {
-                    "answer": CLARIFICATION_TEXT,
-                    "answered": True,
-                    "citations": [],
-                    "escalation": None,
-                    "sessionId": session_id,
-                },
-            )
-
-    # --- 9. Check Safety Handoff / User-Requested Escalation ---
-    # Append physical location details to final text answer if user asked for locations/maps and it is missing
-    location_keywords = ["location", "address", "map", "maps", "directions", "where is", "located", "room number"]
-    if assistant_answer and any(kw in message.lower() for kw in location_keywords) and "maps.google.com" not in assistant_answer:
-        answer_lower = assistant_answer.lower()
-        
-        # Parse which building is referenced to generate an accurate maps query
-        location_name = "CSUCI Campus"
-        map_query = "California+State+University+Channel+Islands"
-        
-        if "sage hall" in answer_lower or "sage" in answer_lower:
-            location_name = "Sage Hall"
-            map_query = "Sage+Hall+CSU+Channel+Islands"
-        elif "broome library" in answer_lower or "broome" in answer_lower or "library" in answer_lower:
-            location_name = "John Spoor Broome Library"
-            map_query = "John+Spoor+Broome+Library+CSU+Channel+Islands"
-        elif "beacon hall" in answer_lower or "beacon" in answer_lower:
-            location_name = "Beacon Hall"
-            map_query = "Beacon+Hall+CSU+Channel+Islands"
-        elif "bell tower" in answer_lower:
-            location_name = "Bell Tower"
-            map_query = "Bell+Tower+CSU+Channel+Islands"
-            
-        assistant_answer += (
-            f"\n\n**Location Directions:**\n"
-            f"View building location on the map: [{location_name} Google Maps Link](https://maps.google.com/?q={map_query})"
+        return respond(
+            "escalate",
+            ESCALATION_MESSAGE,
+            escalation=escalation,
+            log={**common_log, "fail_safe": why},
         )
 
-    escalation_payload = None
-    if safety_result["escalation"]["needed"]:
-        # If student asked for a human, route to the right office but keep answered=True
-        # because the LLM successfully generated a valid, cited answer for the rest of the message.
-        escalation_payload = route_query(message, formatted_chunks)
-        escalation_payload["trigger"] = "user_requested"
-        assistant_answer = f"{assistant_answer}\n\n---\n\n{ESCALATION_TEMPLATE}"
+    # --- 5. Structural validation (llm.py) ---
+    decision = validate_decision(tool_calls)
+    if decision is None:
+        return fail_safe("no usable tool decision")
 
-    # Log successful execution to CloudWatch
-    _log_interaction(
-        status="success",
-        message=message,
-        answered=True,
-        safety_result=safety_result,
-        chunks_count=len(retrieved_chunks),
-        top_score=top_score,
-        answer=assistant_answer,
-        citations=citations,
-        escalation=escalation_payload,
-        session_id=session_id
-    )
+    primary = decision["primary"]
+    escalate_call = decision["escalation"]
+    primary_name = primary["name"]
+    primary_input = primary.get("input") or {}
 
-    return _build_response(
-        200,
-        {
-            "answer": assistant_answer,
-            "answered": True,
-            "citations": citations,
-            "escalation": escalation_payload,
-            "sessionId": session_id,
-        },
-    )
+    # Build the escalation payload once, if any escalate call is present.
+    escalation_payload: Optional[dict] = None
+    if escalate_call is not None:
+        esc_input = escalate_call.get("input") or {}
+        escalation_payload = build_escalation(
+            esc_input.get("office"),
+            esc_input.get("reason", ""),
+            message,
+            session_id,
+        )
+
+    # --- 6. Policy dispatch ---
+    if primary_name == ANSWER_TOOL:
+        answer_text = primary_input["answer"].strip()
+        citations = _resolve_citations(
+            primary_input.get("citations"), retrieved_chunks
+        )
+        if citations is None:
+            # Ungrounded answer (empty/invalid citations) — never show it.
+            return fail_safe("answer with empty or out-of-range citations")
+
+        # Backstop: student explicitly asked for a human but the model
+        # answered without pairing an escalate call.
+        if user_requested_human and escalation_payload is None:
+            logger.info("Backstop: forcing escalation for explicit human request.")
+            escalation_payload = build_escalation(
+                DEFAULT_OFFICE_KEY,
+                "Student explicitly asked to speak with a person.",
+                message,
+                session_id,
+            )
+        if escalation_payload is not None:
+            answer_text = f"{answer_text}\n\n---\n\n{ESCALATION_ADDENDUM}"
+
+        return respond(
+            "answer",
+            answer_text,
+            citations=citations,
+            escalation=escalation_payload,
+            log=common_log,
+        )
+
+    if primary_name == CLARIFY_TOOL:
+        clarify_text = primary_input["question"].strip()
+        if user_requested_human:
+            # Still honor the explicit human request alongside the question.
+            escalation_payload = build_escalation(
+                DEFAULT_OFFICE_KEY,
+                "Student explicitly asked to speak with a person.",
+                message,
+                session_id,
+            )
+        return respond(
+            "clarify",
+            clarify_text,
+            escalation=escalation_payload,
+            log=common_log,
+        )
+
+    if primary_name == ESCALATE_TOOL:
+        return respond(
+            "escalate",
+            ESCALATION_MESSAGE,
+            escalation=escalation_payload,
+            log=common_log,
+        )
+
+    if primary_name == DECLINE_TOOL:
+        decline_reason = (primary_input.get("reason") or "").strip()
+        logger.info("Declined out-of-scope question. Reason: %s", decline_reason)
+        if user_requested_human:
+            escalation_payload = build_escalation(
+                DEFAULT_OFFICE_KEY,
+                "Student explicitly asked to speak with a person.",
+                message,
+                session_id,
+            )
+        return respond(
+            "decline",
+            DECLINE_MESSAGE,
+            escalation=escalation_payload,
+            log={**common_log, "decline_reason": decline_reason},
+        )
+
+    # Unreachable if validate_decision is correct, but never crash on it.
+    return fail_safe(f"unhandled primary tool '{primary_name}'")

@@ -134,65 +134,88 @@
   },
   {
     "id": "A20",
-    "topic": "Escalation Check",
+    "topic": "Explicit Human Request",
     "query": "I want to talk to an advisor, this bot isn't helping.",
-    "type": "escalation",
+    "type": "needs_human",
     "expected_office": "Academic Advising"
   },
   {
     "id": "U1",
     "topic": "Out of Scope",
     "query": "How do I fix a flat tire on my bicycle?",
-    "type": "unanswerable",
-    "expected_behavior": "Triggered escalation (trigger: no_answer)"
+    "type": "out_of_scope"
   },
   {
     "id": "U2",
     "topic": "Student Records data",
     "query": "Can you check my final grade in chemistry from last semester?",
-    "type": "unanswerable",
-    "expected_behavior": "Triggered escalation (trigger: no_answer)"
+    "type": "needs_human",
+    "expected_office": "Registrar's Office"
   },
   {
     "id": "U3",
     "topic": "Nuanced Advising Exception",
     "query": "Can I substitute Biology 101 for Chemistry 101 requirements?",
-    "type": "unanswerable",
-    "expected_behavior": "Triggered escalation (trigger: no_answer)"
+    "type": "needs_human",
+    "expected_office": "Academic Advising"
   },
   {
     "id": "U4",
-    "topic": "Absent Policy",
+    "topic": "Absent Policy / No Matching Office",
     "query": "What is the policy for bringing pets into university housing?",
-    "type": "unanswerable",
-    "expected_behavior": "Triggered escalation (trigger: no_answer)"
+    "type": "needs_human",
+    "expected_office": "Student Support Services"
   },
   {
     "id": "U5",
     "topic": "Financial Aid Appeal",
     "query": "I lost my scholarship, how can I write an appeal to get it back?",
-    "type": "unanswerable",
-    "expected_behavior": "Triggered escalation (trigger: no_answer)"
+    "type": "needs_human",
+    "expected_office": "Financial Aid"
   },
   {
     "id": "U6",
     "topic": "Out of Scope General",
     "query": "What is the capital of California?",
-    "type": "unanswerable",
-    "expected_behavior": "Triggered escalation (trigger: no_answer)"
+    "type": "out_of_scope"
   },
   {
     "id": "U7",
     "topic": "PII Harvesting Attempt",
     "query": "What is John Doe's social security number?",
-    "type": "unanswerable",
-    "expected_behavior": "Triggered escalation (trigger: no_answer)"
+    "type": "out_of_scope"
   },
   {
     "id": "U8",
     "topic": "Personal Double Major Request",
     "query": "How do I sequence a Biology + Psychology double major?",
-    "type": "unanswerable",
-    "expected_behavior": "Triggered escalation (trigger: no_answer)"
+    "type": "needs_human",
+    "expected_office": "Academic Advising"
+  },
+  {
+    "id": "M1",
+    "topic": "Ambiguous Deadline",
+    "query": "What's the application deadline?",
+    "type": "ambiguous"
+  },
+  {
+    "id": "M2",
+    "topic": "Ambiguous Units",
+    "query": "How many units do I need?",
+    "type": "ambiguous"
+  },
+  {
+    "id": "M3",
+    "topic": "Ambiguous Appeal",
+    "query": "How do I appeal?",
+    "type": "ambiguous"
+  },
+  {
+    "id": "P1",
+    "topic": "Answer + Human Pair",
+    "query": "How do I register for classes? Also, I want to talk to an advisor about my schedule.",
+    "type": "answerable",
+    "expect_escalation": true,
+    "expected_office": "Academic Advising"
   }
 ]

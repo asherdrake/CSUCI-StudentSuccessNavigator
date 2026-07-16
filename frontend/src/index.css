@@ -394,6 +394,15 @@ body {
   border-color: var(--csuci-red);
 }
 
+/* Inline [N] passage markers inside answer text */
+.citation-marker {
+  color: var(--csuci-red);
+  font-weight: 700;
+  font-size: 0.85em;
+  vertical-align: super;
+  text-decoration: none;
+}
+
 .escalation-alert-box {
   background-color: #FEF2F2;
   border: 1px dashed #FCA5A5;

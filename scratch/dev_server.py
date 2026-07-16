@@ -8,10 +8,11 @@ Allows the React team to test against the live backend locally.
 import json
 import os
 import sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-# Setup python path imports
-PROJECT_ROOT = "/Users/aalindkale/Downloads/CSUCI Student Success Navigation"
+# Setup python path imports (derived from this file's location — never hardcode,
+# this repo runs on multiple machines/OSes)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "lambda"))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "lambda/orchestrator"))
@@ -85,8 +86,11 @@ class LambdaDevHandler(BaseHTTPRequestHandler):
 def run_server(port=8000):
     load_env()
     server_address = ("", port)
-    httpd = HTTPServer(server_address, LambdaDevHandler)
-    print(f"\n🚀 CSUCI Student Navigator local backend server running on http://localhost:{port}/chat")
+    # Threading matters: browsers hold keep-alive connections, which would
+    # wedge a single-threaded HTTPServer and block every other client.
+    httpd = ThreadingHTTPServer(server_address, LambdaDevHandler)
+    # No emoji here: Windows consoles default to cp1252 and crash on it.
+    print(f"\nCSUCI Student Navigator local backend server running on http://localhost:{port}/chat")
     print("Press Ctrl+C to stop.\n")
     try:
         httpd.serve_forever()
