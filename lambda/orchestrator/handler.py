@@ -66,6 +66,21 @@ _CORS_HEADERS: Dict[str, str] = {
     "Content-Type": "application/json",
 }
 
+# Mapping of campus location enums to user-facing name and Google Maps URLs
+BUILDING_MAPS: Dict[str, tuple[str, str]] = {
+    "sage_hall": ("Sage Hall", "https://maps.google.com/?q=Sage+Hall+CSU+Channel+Islands"),
+    "broome_library": ("John Spoor Broome Library", "https://maps.google.com/?q=John+Spoor+Broome+Library+CSU+Channel+Islands"),
+    "bell_tower": ("Bell Tower", "https://maps.google.com/?q=Bell+Tower+CSU+Channel+Islands"),
+    "sierra_hall": ("Sierra Hall", "https://maps.google.com/?q=Sierra+Hall+CSU+Channel+Islands"),
+    "malibu_hall": ("Malibu Hall", "https://maps.google.com/?q=Malibu+Hall+CSU+Channel+Islands"),
+    "aliso_hall": ("Aliso Hall", "https://maps.google.com/?q=Aliso+Hall+CSU+Channel+Islands"),
+    "napa_hall": ("Napa Hall", "https://maps.google.com/?q=Napa+Hall+CSU+Channel+Islands"),
+    "solano_hall": ("Solano Hall", "https://maps.google.com/?q=Solano+Hall+CSU+Channel+Islands"),
+    "placer_hall": ("Placer Hall", "https://maps.google.com/?q=Placer+Hall+CSU+Channel+Islands"),
+    "student_housing": ("Student Housing", "https://maps.google.com/?q=CSU+Channel+Islands+Student+Housing"),
+    "main_campus": ("CSUCI Main Campus", "https://maps.google.com/?q=CSU+Channel+Islands"),
+}
+
 
 def _debug_chunks_enabled() -> bool:
     """Whether to log/return retrieved chunks (set DEBUG_CHUNKS=1 in .env).
@@ -394,6 +409,21 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     # --- 6. Policy dispatch ---
     if primary_name == ANSWER_TOOL:
         answer_text = primary_input["answer"].strip()
+        
+        # Resolve any mentioned buildings to Google Maps links programmatically
+        buildings = primary_input.get("buildings_mentioned") or []
+        location_links = []
+        for b in buildings:
+            if b in BUILDING_MAPS:
+                name, url = BUILDING_MAPS[b]
+                location_links.append(f"[{name}]({url})")
+        if location_links:
+            links_str = ", ".join(location_links)
+            if language_code == "es":
+                answer_text = f"{answer_text}\n\nEnlace del mapa del campus: {links_str}"
+            else:
+                answer_text = f"{answer_text}\n\nCampus Map link(s): {links_str}"
+
         citations = _resolve_citations(
             primary_input.get("citations"), retrieved_chunks
         )
