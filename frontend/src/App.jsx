@@ -32,6 +32,7 @@ function App() {
   const clickStart = useRef(0); // Timestamp to distinguish click vs drag
 
   const chatEndRef = useRef(null);
+  const streamIntervalRef = useRef(null);
 
   // Auto-scroll chat to latest bubble
   useEffect(() => {
@@ -116,6 +117,9 @@ function App() {
 
   // --- Close & Reset Handler ---
   const handleClose = () => {
+    if (streamIntervalRef.current) {
+      clearInterval(streamIntervalRef.current);
+    }
     setIsOpen(false);
     setMessages([
       {
@@ -360,16 +364,42 @@ function App() {
         setSessionId(data.sessionId);
       }
 
+      const fullAnswer = data.answer || '';
+      const words = fullAnswer.split(' ');
+      let currentWordIndex = 0;
+      let currentContent = '';
+
+      const botMsgId = (Date.now() + 1).toString();
       const newBotMsg = {
-        id: (Date.now() + 1).toString(),
+        id: botMsgId,
         role: 'bot',
-        content: data.answer || '',
+        content: '',
         citations: data.citations || [],
         escalation: data.escalation,
         answered: data.answered
       };
 
       setMessages((prev) => [...prev, newBotMsg]);
+
+      // Set up the streaming interval
+      if (streamIntervalRef.current) {
+        clearInterval(streamIntervalRef.current);
+      }
+
+      streamIntervalRef.current = setInterval(() => {
+        if (currentWordIndex < words.length) {
+          currentContent += (currentWordIndex === 0 ? '' : ' ') + words[currentWordIndex];
+          currentWordIndex++;
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === botMsgId ? { ...msg, content: currentContent } : msg
+            )
+          );
+        } else {
+          clearInterval(streamIntervalRef.current);
+          streamIntervalRef.current = null;
+        }
+      }, 25); // Fast, premium-feeling 25ms delay per word
 
       if (data.answered && data.answer) {
         setHistory((prev) => [
