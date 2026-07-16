@@ -358,7 +358,8 @@ class TestLanguagePreference:
 
         mock_translate.assert_not_called()
         system_prompt = mock_invoke.call_args.kwargs["system_prompt"]
-        assert "Language override" not in system_prompt
+        assert "selected English in the interface" in system_prompt
+        assert "selected Spanish" not in system_prompt
 
 
 # ---------------------------------------------------------------------------

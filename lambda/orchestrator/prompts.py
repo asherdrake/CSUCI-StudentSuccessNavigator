@@ -73,6 +73,18 @@ student-facing text (the answer or the clarifying question) entirely in \
 Spanish, regardless of the language the message was written in.\
 """
 
+# Appended to the system prompt when the student explicitly selects English
+# in the UI. Overrides the auto-detect rule (#3): an explicit choice wins.
+ENGLISH_OVERRIDE: str = """\
+
+
+## Language override
+
+The student has explicitly selected English in the interface. Write ALL \
+student-facing text (the answer or the clarifying question) entirely in \
+English, regardless of the language the message was written in.\
+"""
+
 # ---------------------------------------------------------------------------
 # Code-owned student-facing templates (the model never writes these)
 # ---------------------------------------------------------------------------

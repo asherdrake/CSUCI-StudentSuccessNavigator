@@ -35,6 +35,7 @@ from prompts import (  # noqa: E402
     ESCALATION_ADDENDUM,
     ESCALATION_MESSAGE,
     SPANISH_OVERRIDE,
+    ENGLISH_OVERRIDE,
     SYSTEM_PROMPT_TEMPLATE,
 )
 from llm import (  # noqa: E402
@@ -322,6 +323,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     )
     if language_code == "es":
         system_prompt += SPANISH_OVERRIDE
+    else:
+        system_prompt += ENGLISH_OVERRIDE
     converse_messages = format_messages_for_converse(history, message)
 
     try:
