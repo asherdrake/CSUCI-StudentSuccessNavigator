@@ -25,30 +25,75 @@ logger.setLevel(logging.INFO)
 _CRISIS_PATTERNS: list[re.Pattern] = [
     re.compile(pattern, re.IGNORECASE)
     for pattern in [
-        # Suicidal ideation
-        r"\b(i\s+want\s+to\s+(die|kill\s+myself|end\s+(it|my\s+life)))\b",
+        # --- Suicidal ideation (explicit) ---
+        # Excludes common idioms ("die of embarrassment/laughing/boredom")
+        # via negative lookahead — those aren't genuine crisis signals.
+        r"\b(i\s+want\s+to\s+die)\b(?!\s+of\s+(embarrassment|laughing|laughter|boredom|cringe))",
+        r"\b(i\s+want\s+to\s+(kill\s+myself|end\s+(it|my\s+life)))\b",
         r"\b(suicid(e|al))\b",
         r"\b(kill\s+(myself|me))\b",
         r"\b(end\s+my\s+life)\b",
-        r"\b(don'?t\s+want\s+to\s+(live|be\s+alive|exist))\b",
+        r"\b(don'?t\s+want\s+to\s+(live|be\s+alive|exist)\s+(anymore)?)\b",
         r"\b(no\s+reason\s+to\s+live)\b",
         r"\b(better\s+off\s+dead)\b",
         r"\b(wish\s+i\s+were?\s+dead)\b",
         r"\b(end\s+it\s+all|ending\s+it\s+all)\b",
-        # Self-harm
+        r"\b(not\s+want(ing)?\s+to\s+(be\s+here|wake\s+up)\s+(anymore)?)\b",
+        r"\b(want(ed)?\s+to\s+disappear)\b",
+        r"\b(planning\s+(my|to\s+end)\s+(own\s+)?(death|life))\b",
+        r"\b(life\s+(isn'?t|is\s+not)\s+worth\s+living)\b",
+        r"\b(everyone\s+would\s+be\s+better\s+(off\s+)?without\s+me)\b",
+        r"\b(thinking\s+about\s+(suicide|ending\s+(it|my\s+life)))\b",
+        # --- Self-harm: verb phrases (paraphrased beyond just "cut"/"hurt myself") ---
         r"\b(self[- ]?harm(ing)?)\b",
         r"\b(cut(ting)?\s+myself)\b",
         r"\b(hurt(ing)?\s+myself)\b",
-        # Emergency / violence
+        r"\b(harm(ing)?\s+myself)\b",
+        r"\b(injur(e|ing)\s+myself)\b",
+        r"\b(cause\s+(myself\s+)?(pain|harm|injury))\b",
+        r"\b(want(ed)?\s+to\s+feel\s+pain)\b",
+        r"\b((make|making)\s+myself\s+bleed)\b",
+        r"\b(burn(ing)?\s+myself)\b",
+        r"\b(punish(ing)?\s+myself)\s+(physically)?\b",
+        # --- Self-harm: means/method language (a person describing HOW, not just THAT) ---
+        # Requires BOTH a weapon word AND explicit self-harm intent
+        # ("cause/cut/hurt/harm" + "myself"/"me"/"pain") in the same
+        # message — a weapon word alone ("I need a sharp knife for my
+        # cooking class") must never trigger on its own. The gap between
+        # the two halves is intentionally unbounded (not just adjacent
+        # words) since real phrasing separates them across a sentence
+        # ("I have a sharp knife, can I use it to cause me pain").
+        r"\b(knife|blade|razor)\b.*\b(cause|cut|hurt|harm)\w*\s+(myself|me)\b.*\bpain\b",
+        r"\b(knife|blade|razor)\b.*\b(cause|cut|hurt|harm)\w*\s+(myself|me)\b",
+        r"\b(cause|cut|hurt|harm)\w*\s+(myself|me)\b.*\b(knife|blade|razor)\b",
+        r"\b(overdos(e|ing)\s+on\s+(pills|medication|meds))\b",
+        r"\b(take\s+all\s+(my|the)\s+(pills|medication|meds))\b",
+        r"\b(how\s+(many|much)\s+pills?\s+.{0,20}(die|overdose|kill))\b",
+        r"\b(hang(ing)?\s+myself)\b",
+        r"\b(jump(ing)?\s+(off|from)\s+.{0,15}(bridge|building|roof))\b",
+        # --- Emergency / violence ---
         r"\b(i('?m|\s+am)\s+going\s+to\s+hurt\s+(myself|someone))\b",
         r"\b(i('?m|\s+am)\s+in\s+danger)\b",
         r"\b(someone\s+is\s+(hurting|threatening)\s+me)\b",
         r"\b(i\s+feel\s+unsafe)\b",
         r"\b(please\s+help\s+me\s+now)\b",
+        # --- Emotional distress / depression (mood language, not just explicit intent) ---
+        r"\b(i('?m|\s+am)\s+(feeling\s+)?(so\s+)?(depressed|suicidal|hopeless|worthless))\b",
+        r"\b(i('?m|\s+am)\s+feeling\s+(really\s+|so\s+)?(alone|lonely|empty|numb)\b.{0,25}(depress|worthless|hopeless|pointless|give\s+up))",
+        r"\b(i\s+feel\s+(like\s+)?(a\s+)?(burden|worthless|hopeless|empty\s+inside))\b",
+        r"\b(nothing\s+(matters|feels\s+worth\s+it)\s+(anymore)?)\b",
+        r"\b(i\s+can'?t\s+(take|handle|do)\s+this\s+(anymore|any\s+longer))\b",
+        r"\b(i('?m|\s+am)\s+(so\s+|really\s+)?struggling\s+(with\s+)?(my\s+)?(mental\s+health|depression|thoughts))\b",
+        r"\b(having\s+(dark|suicidal)\s+thoughts)\b",
+        r"\b(i\s+give\s+up\s+on\s+(life|everything))\b",
+        r"\b(no\s+one\s+would\s+(care|notice|miss\s+me)\s+if\s+i\s+(was|were)\s+gone)\b",
     ]
 ]
 
-# Keywords that alone are strong crisis signals
+# Keywords that alone are strong, unambiguous crisis signals — deliberately
+# excludes words like "hopeless"/"worthless" that are too common in casual
+# complaints ("this homework is hopeless") to trigger on their own; those are
+# only caught above when combined with self-referential context via regex.
 _CRISIS_KEYWORDS: set[str] = {
     "suicide",
     "suicidal",
@@ -56,6 +101,11 @@ _CRISIS_KEYWORDS: set[str] = {
     "selfharm",
     "kill myself",
     "end my life",
+    # NOTE: "want to die" deliberately excluded from this bare-substring list
+    # — "I want to die of embarrassment/laughing" is a common idiom and this
+    # keyword check has no way to exclude it. The regex pattern above handles
+    # "want to die" with that exclusion built in; this list is reserved for
+    # phrases unambiguous in any context.
 }
 
 # ---------------------------------------------------------------------------

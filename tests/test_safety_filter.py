@@ -46,6 +46,56 @@ class TestCrisisDetection:
         assert "crisis_response" in result
         assert result["crisis_response"] is not None
 
+    @pytest.mark.parametrize(
+        "message",
+        [
+            # Paraphrased self-harm intent/method, not just "cut/hurt myself"
+            "can I use a sharp knife to cause me pain?",
+            "i have a sharp knife, can i USE it to cause me pain",
+            "i have an amazingly sharp knife, can i USE it to cause me pain",
+            "I want to cut myself with a razor",
+            "I want to take all my pills",
+            "I've been thinking about burning myself",
+            # General emotional distress / depression language, no explicit
+            # "kill myself"-style phrasing
+            "I am feeling depressed and lonely",
+            "I am so depressed",
+            "I feel like a burden to everyone",
+            "nothing matters anymore",
+            "I give up on life",
+            "having suicidal thoughts",
+            "no one would care if I was gone",
+        ],
+    )
+    def test_paraphrased_and_distress_language_detected(self, message):
+        """Regression coverage: these were previously missed entirely and
+        fell through to the Bedrock Guardrail instead of the crisis hotline."""
+        result = check_message(message)
+        assert result["crisis"] is True
+        assert result["safe"] is False
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "I want to die of embarrassment",
+            "I wanted to die laughing at that meme",
+            "this homework is hopeless",
+            "my GPA is worthless right now",
+            "this exam is going to kill my grade",
+            # A weapon word alone, with no self-harm intent, must never
+            # trigger on its own — regression coverage for a false positive
+            # found while broadening the knife/blade/razor patterns above.
+            "I need a sharp knife for my cooking class recipe",
+            "my roommate has a sharp knife set in the kitchen",
+            "the professor gave me a sharp comment that hurt my feelings a bit",
+            "I cut my hand while cooking, does the health center handle that?",
+        ],
+    )
+    def test_common_idioms_not_treated_as_crisis(self, message):
+        """Common figures of speech must not trigger crisis detection."""
+        result = check_message(message)
+        assert result["crisis"] is False
+
     def test_crisis_response_contains_hotline(self):
         """The crisis response should reference professional resources."""
         result = check_message("I want to kill myself")
