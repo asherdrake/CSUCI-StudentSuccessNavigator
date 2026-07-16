@@ -217,7 +217,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         )
 
     # --- 3. RAG Retrieval ---
-    search_query = translate_query_to_english(message)
+    if language_code == "es":
+        search_query = translate_query_to_english(message)
+    else:
+        search_query = message
+
     logger.info("Original query: '%s' -> Search query: '%s'", message, search_query)
     retrieved_chunks = retrieve_context(search_query, top_k=3)
     top_score = retrieved_chunks[0]["score"] if retrieved_chunks else 0.0
