@@ -11,7 +11,7 @@ import { API_URL, WELCOME_MESSAGE } from '../config';
  *   { type, message, citations?, escalation?, sessionId }
  */
 export function useChat() {
-  const [messages, setMessages] = useState([WELCOME_MESSAGE]);
+  const [messages, setMessages] = useState([]);
   const [history, setHistory] = useState([]);
   const [sessionId, setSessionId] = useState(null);
   const [input, setInput] = useState('');
@@ -53,7 +53,7 @@ export function useChat() {
 
   const reset = () => {
     stopStreaming();
-    setMessages([WELCOME_MESSAGE]);
+    setMessages([]);
     setHistory([]);
     setSessionId(null);
     setInput('');
