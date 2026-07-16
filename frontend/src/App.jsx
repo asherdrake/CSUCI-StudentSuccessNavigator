@@ -53,7 +53,7 @@ function App() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // --- Draggable Handlers for the Bubble ---
+  // --- Draggable Handlers for the Bubble (Window-Bound for Seamless Tracking) ---
   const handleMouseDown = (e) => {
     if (e.button !== 0) return;
     setIsDragging(true);
@@ -62,28 +62,6 @@ function App() {
     bubbleStart.current = { x: bubblePos.x, y: bubblePos.y };
   };
 
-  const handleMouseMove = (e) => {
-    if (!isDragging) return;
-    const deltaX = e.clientX - dragStart.current.x;
-    const deltaY = e.clientY - dragStart.current.y;
-    
-    const newX = Math.max(10, Math.min(bubbleStart.current.x + deltaX, window.innerWidth - 74));
-    const newY = Math.max(80, Math.min(bubbleStart.current.y + deltaY, window.innerHeight - 74));
-
-    setBubblePos({ x: newX, y: newY });
-  };
-
-  const handleMouseUp = (e) => {
-    setIsDragging(false);
-    const duration = Date.now() - clickStart.current;
-    const distance = Math.hypot(e.clientX - dragStart.current.x, e.clientY - dragStart.current.y);
-
-    if (distance < 6 && duration < 300) {
-      setIsOpen(true);
-    }
-  };
-
-  // --- Touch Support for Mobile Dragging ---
   const handleTouchStart = (e) => {
     const touch = e.touches[0];
     setIsDragging(true);
@@ -92,28 +70,61 @@ function App() {
     bubbleStart.current = { x: bubblePos.x, y: bubblePos.y };
   };
 
-  const handleTouchMove = (e) => {
+  useEffect(() => {
     if (!isDragging) return;
-    const touch = e.touches[0];
-    const deltaX = touch.clientX - dragStart.current.x;
-    const deltaY = touch.clientY - dragStart.current.y;
-    
-    const newX = Math.max(10, Math.min(bubbleStart.current.x + deltaX, window.innerWidth - 74));
-    const newY = Math.max(80, Math.min(bubbleStart.current.y + deltaY, window.innerHeight - 74));
 
-    setBubblePos({ x: newX, y: newY });
-  };
+    const handleWindowMouseMove = (e) => {
+      const deltaX = e.clientX - dragStart.current.x;
+      const deltaY = e.clientY - dragStart.current.y;
+      
+      const newX = Math.max(10, Math.min(bubbleStart.current.x + deltaX, window.innerWidth - 74));
+      const newY = Math.max(80, Math.min(bubbleStart.current.y + deltaY, window.innerHeight - 74));
+      setBubblePos({ x: newX, y: newY });
+    };
 
-  const handleTouchEnd = (e) => {
-    setIsDragging(false);
-    const duration = Date.now() - clickStart.current;
-    const touch = e.changedTouches[0];
-    const distance = Math.hypot(touch.clientX - dragStart.current.x, touch.clientY - dragStart.current.y);
+    const handleWindowMouseUp = (e) => {
+      setIsDragging(false);
+      const duration = Date.now() - clickStart.current;
+      const distance = Math.hypot(e.clientX - dragStart.current.x, e.clientY - dragStart.current.y);
 
-    if (distance < 6 && duration < 300) {
-      setIsOpen(true);
-    }
-  };
+      if (distance < 6 && duration < 300) {
+        setIsOpen(true);
+      }
+    };
+
+    const handleWindowTouchMove = (e) => {
+      const touch = e.touches[0];
+      const deltaX = touch.clientX - dragStart.current.x;
+      const deltaY = touch.clientY - dragStart.current.y;
+      
+      const newX = Math.max(10, Math.min(bubbleStart.current.x + deltaX, window.innerWidth - 74));
+      const newY = Math.max(80, Math.min(bubbleStart.current.y + deltaY, window.innerHeight - 74));
+      setBubblePos({ x: newX, y: newY });
+    };
+
+    const handleWindowTouchEnd = (e) => {
+      setIsDragging(false);
+      const duration = Date.now() - clickStart.current;
+      const touch = e.changedTouches[0];
+      const distance = Math.hypot(touch.clientX - dragStart.current.x, touch.clientY - dragStart.current.y);
+
+      if (distance < 6 && duration < 300) {
+        setIsOpen(true);
+      }
+    };
+
+    window.addEventListener('mousemove', handleWindowMouseMove);
+    window.addEventListener('mouseup', handleWindowMouseUp);
+    window.addEventListener('touchmove', handleWindowTouchMove, { passive: false });
+    window.addEventListener('touchend', handleWindowTouchEnd);
+
+    return () => {
+      window.removeEventListener('mousemove', handleWindowMouseMove);
+      window.removeEventListener('mouseup', handleWindowMouseUp);
+      window.removeEventListener('touchmove', handleWindowTouchMove);
+      window.removeEventListener('touchend', handleWindowTouchEnd);
+    };
+  }, [isDragging]);
 
   // --- Close & Reset Handler ---
   const handleClose = () => {
@@ -457,11 +468,7 @@ function App() {
         className={`chat-trigger-bubble ${isOpen ? 'hidden' : ''}`}
         style={{ left: `${bubblePos.x}px`, top: `${bubblePos.y}px` }}
         onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
         onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
       >
         <svg className="bubble-icon" viewBox="0 0 24 24">
           <path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z" />
