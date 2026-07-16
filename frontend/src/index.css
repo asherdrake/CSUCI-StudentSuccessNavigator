@@ -19,7 +19,7 @@
 
   /* Background Sticker Customizations - Edit these to change/remove the background sticker */
   --chatbot-bg-sticker: url('/csuci_dolphin_sticker.png');
-  --chatbot-bg-sticker-opacity: 0.018; /* Control the fade intensity (0.0 for completely hidden, 1.0 for solid) */
+  --chatbot-bg-sticker-opacity: 0.04; /* Control the fade intensity (0.0 for completely hidden, 1.0 for solid) */
 }
 
 * {
