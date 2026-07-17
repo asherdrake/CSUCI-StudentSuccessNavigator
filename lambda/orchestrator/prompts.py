@@ -75,12 +75,22 @@ English, regardless of the language the message was written in.\
 # Code-owned student-facing templates (the model never writes these)
 # ---------------------------------------------------------------------------
 
-# Shown as the message body when the model escalates without answering.
+# Shown when the model escalates because it could NOT resolve the question
+# itself (info missing from passages, or the situation needs human judgment).
 ESCALATION_MESSAGE: str = (
     "I wasn't able to fully resolve this myself, but this is exactly the kind "
     "of question the team below can help with. I've routed your request to "
     "them — their contact details are on the card below, so you can also reach "
     "out directly.\n\n"
+    "Is there anything else I can help you with in the meantime?"
+)
+
+# Shown when the student DIRECTLY asked to be connected to a person/office and
+# the model escalated to fulfill that request. Framed as a success (the bot did
+# exactly what was asked), not as a failure to resolve.
+ESCALATION_DIRECT_MESSAGE: str = (
+    "Of course — I've passed your request along to the team below, and you'll "
+    "find their contact details on the card so you can reach out directly.\n\n"
     "Is there anything else I can help you with in the meantime?"
 )
 

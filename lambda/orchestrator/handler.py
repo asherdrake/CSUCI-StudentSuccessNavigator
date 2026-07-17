@@ -33,6 +33,7 @@ from retriever import retrieve_context  # noqa: E402
 from prompts import (  # noqa: E402
     DECLINE_MESSAGE,
     ESCALATION_ADDENDUM,
+    ESCALATION_DIRECT_MESSAGE,
     ESCALATION_MESSAGE,
     SPANISH_OVERRIDE,
     ENGLISH_OVERRIDE,
@@ -470,9 +471,20 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         )
 
     if primary_name == ESCALATE_TOOL:
+        # A direct "connect me to X" request is a success, not a failure to
+        # resolve — pick the lead-in accordingly. Trust the model's `trigger`,
+        # and also treat the regex-detected explicit-human flag as a direct
+        # request (belt-and-suspenders: either signal alone is enough).
+        is_direct_request = (
+            primary_input.get("trigger") == "student_requested"
+            or user_requested_human
+        )
+        escalate_message = (
+            ESCALATION_DIRECT_MESSAGE if is_direct_request else ESCALATION_MESSAGE
+        )
         return respond(
             "escalate",
-            ESCALATION_MESSAGE,
+            escalate_message,
             escalation=escalation_payload,
             log=common_log,
         )

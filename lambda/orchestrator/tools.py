@@ -87,6 +87,13 @@ Choosing the office:
 one or two sentences saying what the student needs and why it requires a human. \
 The student never sees it.
 
+`trigger` says WHY you are escalating, so the student sees the right lead-in:
+- student_requested: the student explicitly asked to be connected to a person \
+  or a specific office (e.g. "connect me to financial aid", "I want to talk to \
+  an advisor"). You are fulfilling a direct request.
+- cannot_resolve: the student did NOT ask for a human, but you are routing them \
+  because the passages lack the answer or the situation needs human judgment.
+
 You may pair this tool with answer_from_context when a message contains BOTH an \
 answerable question AND a request or need for a human (e.g. "How do I register? \
 Also connect me to an advisor."). That is the only allowed combination.\
@@ -199,8 +206,17 @@ TOOL_CONFIG = {
                                     "needs and why it requires a human."
                                 ),
                             },
+                            "trigger": {
+                                "type": "string",
+                                "enum": ["student_requested", "cannot_resolve"],
+                                "description": (
+                                    "Why you are escalating: 'student_requested' "
+                                    "if the student explicitly asked for a person/"
+                                    "office, else 'cannot_resolve'."
+                                ),
+                            },
                         },
-                        "required": ["office", "reason"],
+                        "required": ["office", "reason", "trigger"],
                     }
                 },
             }
