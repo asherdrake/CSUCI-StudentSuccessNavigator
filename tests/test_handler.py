@@ -96,10 +96,13 @@ def _body(response):
     return json.loads(response["body"])
 
 
-def _answer_call(answer="Register via myCI starting March 1 [1].", citations=None):
+def _answer_call(answer="Register via myCI starting March 1 [1].", citations=None, buildings_mentioned=None):
+    inp = {"answer": answer, "citations": citations if citations is not None else [1]}
+    if buildings_mentioned is not None:
+        inp["buildings_mentioned"] = buildings_mentioned
     return {
         "name": "answer_from_context",
-        "input": {"answer": answer, "citations": citations if citations is not None else [1]},
+        "input": inp,
     }
 
 
@@ -358,7 +361,56 @@ class TestLanguagePreference:
 
         mock_translate.assert_not_called()
         system_prompt = mock_invoke.call_args.kwargs["system_prompt"]
-        assert "Language override" not in system_prompt
+        assert "selected English in the interface" in system_prompt
+        assert "selected Spanish" not in system_prompt
+
+
+@patch("handler.invoke_model")
+@patch("handler.retrieve_context")
+@patch("handler.check_message")
+class TestLocationLinkResolution:
+    def test_answer_resolves_location_links_in_english(
+        self, mock_check, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = SAFE
+        mock_retrieve.return_value = CHUNKS
+        mock_invoke.return_value = [
+            _answer_call(
+                answer="Academic Advising is in Sage Hall.",
+                citations=[1],
+                buildings_mentioned=["sage_hall", "broome_library"],
+            )
+        ]
+
+        body = _body(lambda_handler(_event("Where is advising?"), None))
+
+        assert body["type"] == "answer"
+        assert "Campus Map link(s):" in body["message"]
+        assert "[Sage Hall](https://maps.google.com/?q=Sage+Hall+CSU+Channel+Islands)" in body["message"]
+        assert "[John Spoor Broome Library](https://maps.google.com/?q=John+Spoor+Broome+Library+CSU+Channel+Islands)" in body["message"]
+
+    def test_answer_resolves_location_links_in_spanish(
+        self, mock_check, mock_retrieve, mock_invoke
+    ):
+        mock_check.return_value = SAFE
+        mock_retrieve.return_value = CHUNKS
+        mock_invoke.return_value = [
+            _answer_call(
+                answer="Advising está en Sage.",
+                citations=[1],
+                buildings_mentioned=["sage_hall"],
+            )
+        ]
+
+        event = {
+            "httpMethod": "POST",
+            "body": json.dumps({"message": "¿Dónde está Sage?", "language": "es"}),
+        }
+        body = _body(lambda_handler(event, None))
+
+        assert body["type"] == "answer"
+        assert "Enlace del mapa del campus:" in body["message"]
+        assert "[Sage Hall](https://maps.google.com/?q=Sage+Hall+CSU+Channel+Islands)" in body["message"]
 
 
 # ---------------------------------------------------------------------------

@@ -51,8 +51,8 @@ citation, and recommend confirming with the relevant office.
 - Prefer the most current passage. If only a dated source exists and timeliness \
 matters, answer but note it may be out of date.
 - Format sequential instructions as a numbered list.
-- End with 2-3 related questions the student might find helpful, as a bullet \
-list under a "**You might also want to know:**" heading.\
+- If your answer mentions, locates, or describes any major campus building or location (such as Sage Hall, Broome Library, Bell Tower, Sierra Hall, Malibu Hall, Aliso, Napa, Solano, Placer, Student Housing, or the main campus), you MUST list their corresponding enum keys in the `buildings_mentioned` parameter.\
+
 """
 
 _CLARIFY_DESCRIPTION = """\
@@ -129,6 +129,29 @@ TOOL_CONFIG = {
                                     "Must not be empty."
                                 ),
                             },
+                            "buildings_mentioned": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string",
+                                    "enum": [
+                                        "sage_hall",
+                                        "broome_library",
+                                        "bell_tower",
+                                        "sierra_hall",
+                                        "malibu_hall",
+                                        "aliso_hall",
+                                        "napa_hall",
+                                        "solano_hall",
+                                        "placer_hall",
+                                        "student_housing",
+                                        "main_campus"
+                                    ]
+                                },
+                                "description": (
+                                    "Optional list of campus buildings or locations mentioned in your answer "
+                                    "that need Google Maps links."
+                                )
+                            }
                         },
                         "required": ["answer", "citations"],
                     }
