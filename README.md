@@ -58,7 +58,7 @@ Run the backend Python server and the React frontend concurrently.
 Copy `.env.example` to `.env` in the project root and fill in your values:
 ```env
 # Bedrock Knowledge Base ID
-BEDROCK_KB_ID=XEAFKVXLTI
+BEDROCK_KB_ID=4SYNMDF7GF
 
 # Bedrock model identifier (tool-use-capable inference profile)
 MODEL_ID=us.anthropic.claude-sonnet-5
