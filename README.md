@@ -8,6 +8,10 @@ Built with a **React Vite frontend** and a serverless **Python AWS backend** on 
 [![Watch the Demo Video](https://www.youtube.com/watch?v=K05QOlkDdEM/maxresdefault.jpg)](https://www.youtube.com/watch?v=K05QOlkDdEM)
 
 
+
+https://github.com/user-attachments/assets/7bcd4a35-a22f-4e83-83aa-e6079cd41cd5
+
+
 ## System Architecture
 
 ```mermaid
