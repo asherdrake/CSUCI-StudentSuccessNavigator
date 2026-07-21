@@ -5,6 +5,8 @@ An AI-powered assistant designed to help California State University Channel Isl
 Built with a **React Vite frontend** and a serverless **Python AWS backend** on **Amazon Bedrock** (Claude Sonnet 5 + Knowledge Bases). On every turn the model makes a **structured decision** via Converse tool-use — answer, ask a clarifying question, escalate to a specific campus office, or decline — instead of emitting text that code has to parse.
 
 ---
+[![Watch the Demo Video](https://www.youtube.com/watch?v=K05QOlkDdEM/maxresdefault.jpg)](https://www.youtube.com/watch?v=K05QOlkDdEM)
+
 
 ## System Architecture
 
